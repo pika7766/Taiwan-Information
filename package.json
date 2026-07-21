@@ -1,0 +1,14 @@
+{
+  "name": "taiwan-smart-life-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Taiwan smart life map and public information portal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

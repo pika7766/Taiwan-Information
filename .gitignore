@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+node_modules/
+npm-debug.log*
+.server-output.log
+.server-error.log
+*.tmp.*
+leaflet-2.0.0-alpha.1/
+.continue/
+

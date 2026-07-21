@@ -1,0 +1,316 @@
+{
+  "__README__": {
+    "appName": "字串 (String) -> 應用程式名稱",
+    "defaultCity": "字串 (String) -> 預設載入的縣市代碼（對應下方 cities 物件的鍵名）",
+    "globalServices": {
+      "weather": "字串 (String) -> 全台通用的中央氣象署 API 基礎網址",
+      "dataGovDatasetSearch": "字串 (String) -> 本機伺服器提供的政府資料開放平臺搜尋代理路由"
+    },
+    "categories_definition": "陣列 (Array) -> 定義九宮格的 ID、名稱與圖示，供前端渲染畫面使用",
+    "cities": {
+      "縣市英文代碼": {
+        "cityName": "字串 (String) -> 縣市中文名稱",
+        "mapCenter": "數字陣列 (Array of Numbers) -> 地圖初始中心點 [緯度, 經度]",
+        "mapZoom": "數字 (Number) -> 地圖初始縮放層級 (通常為 12~14)",
+        "dataGovLocalTid": "數字 (Number) -> 政府資料開放平臺的地方政府分類代碼",
+        "categories_api": "物件 (Object) -> 該縣市人生歷程各分類的特定 API 網址，無資料請留空字串 \"\"",
+        "mapLayers_api": "物件 (Object) -> 該縣市地圖圖層（停車場、垃圾車等）的特定 API 網址，無資料請留空字串 \"\""
+      }
+    }
+  },
+  "appName": "台灣智慧生活全方位資訊門戶",
+  "defaultCity": "Tainan",
+  "globalServices": {
+    "weather": "https://opendata.cwa.gov.tw/api/v1/rest/datastore/",
+    "dataGovDatasetSearch": "/api/data-gov/datasets"
+  },
+    "categories_definition": [
+    {"id": "health", "name": "生育保健", "icon": "❤️", "dataGovTid": 291},
+    {"id": "birth", "name": "出生及收養", "icon": "👶", "dataGovTid": 285},
+    {"id": "education", "name": "求學及進修", "icon": "🎓", "dataGovTid": 280},
+    {"id": "military", "name": "服兵役", "icon": "🪖", "dataGovTid": 548},
+    {"id": "job", "name": "求職及就業", "icon": "💼", "dataGovTid": 261},
+    {"id": "business", "name": "開創事業", "icon": "🏢", "dataGovTid": 258},
+    {"id": "marriage", "name": "婚姻", "icon": "💍", "dataGovTid": 549},
+    {"id": "finance", "name": "投資理財", "icon": "📈", "dataGovTid": 254},
+    {"id": "travel", "name": "休閒旅遊", "icon": "✈️", "dataGovTid": 253},
+    {"id": "medical", "name": "就醫", "icon": "🏥", "dataGovTid": 274},
+    {"id": "housing", "name": "購屋及遷徙", "icon": "🏠", "dataGovTid": 417},
+    {"id": "election", "name": "選舉及投票", "icon": "🗳️", "dataGovTid": 283},
+    {"id": "safety", "name": "生活安全及品質", "icon": "🛡️", "dataGovTid": 247},
+    {"id": "retirement", "name": "退休", "icon": "🪑", "dataGovTid": 550},
+    {"id": "elderly", "name": "老年安養", "icon": "👵", "dataGovTid": 286},
+    {"id": "funeral", "name": "生命禮儀", "icon": "🪦", "dataGovTid": 416},
+    {"id": "public_info", "name": "公共資訊", "icon": "ℹ️", "dataGovTid": 249},
+    {"id": "traffic", "name": "交通及通訊", "icon": "🚦", "dataGovTid": 257}
+  ],
+  "cities": {
+    "Taipei": {
+      "cityName": "臺北市",
+      "mapCenter": [25.033, 121.565],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22003,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "https://tcgbusfs.ddns.net/DataPlatform/api-stable/v1/Parking/Static",
+        "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "NewTaipei": {
+      "cityName": "新北市",
+      "mapCenter": [25.016, 121.462],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22026,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Keelung": {
+      "cityName": "基隆市",
+      "mapCenter": [25.128, 121.739],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22004,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Taoyuan": {
+      "cityName": "桃園市",
+      "mapCenter": [24.993, 121.301],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22030,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "HsinchuCity": {
+      "cityName": "新竹市",
+      "mapCenter": [24.803, 120.968],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22006,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "HsinchuCounty": {
+      "cityName": "新竹縣",
+      "mapCenter": [24.827, 121.012],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22005,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Miaoli": {
+      "cityName": "苗栗縣",
+      "mapCenter": [24.564, 120.820],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22007,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Taichung": {
+      "cityName": "臺中市",
+      "mapCenter": [24.147, 120.673],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22027,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Changhua": {
+      "cityName": "彰化縣",
+      "mapCenter": [24.081, 120.538],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22010,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Nantou": {
+      "cityName": "南投縣",
+      "mapCenter": [23.915, 120.686],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22011,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Yunlin": {
+      "cityName": "雲林縣",
+      "mapCenter": [23.709, 120.431],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22012,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "ChiayiCity": {
+      "cityName": "嘉義市",
+      "mapCenter": [23.481, 120.453],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22014,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "ChiayiCounty": {
+      "cityName": "嘉義縣",
+      "mapCenter": [23.459, 120.293],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22013,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Tainan": {
+      "cityName": "臺南市",
+      "mapCenter": [22.997, 120.212],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22028,
+      "categories_api": {
+        "health": "",
+        "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "",
+        "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Kaohsiung": {
+      "cityName": "高雄市",
+      "mapCenter": [22.627, 120.301],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22029,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Pingtung": {
+      "cityName": "屏東縣",
+      "mapCenter": [22.665, 120.485],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22019,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Yilan": {
+      "cityName": "宜蘭縣",
+      "mapCenter": [24.757, 121.753],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22020,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Hualien": {
+      "cityName": "花蓮縣",
+      "mapCenter": [23.977, 121.604],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22021,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Taitung": {
+      "cityName": "臺東縣",
+      "mapCenter": [22.755, 121.149],
+      "mapZoom": 14,
+      "dataGovLocalTid": 22022,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Penghu": {
+      "cityName": "澎湖縣",
+      "mapCenter": [23.565, 119.566],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22023,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Kinmen": {
+      "cityName": "金門縣",
+      "mapCenter": [24.448, 118.378],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22024,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    },
+    "Matsu": {
+      "cityName": "連江縣",
+      "mapCenter": [26.156, 119.929],
+      "mapZoom": 13,
+      "dataGovLocalTid": 22025,
+      "categories_api": {
+        "health": "", "birth": "", "education": "", "military": "", "job": "", "business": "", "marriage": "", "finance": "", "travel": "", "medical": "", "housing": "", "election": "", "safety": "", "retirement": "", "elderly": "", "funeral": "", "public_info": "", "traffic": ""
+      },
+      "mapLayers_api": {
+        "parking": "", "speedCam": "", "garbage": "", "trafficEvent": ""
+      }
+    }
+  }
+}

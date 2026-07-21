@@ -1,0 +1,2491 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <title>台灣智慧生活資訊門戶</title>
+
+  <!-- Tailwind CSS：使用 CDN 維持單一 HTML 檔案。 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#f0fdfa', 100: '#ccfbf1', 600: '#0d9488', 700: '#0f766e', 800: '#115e59' }
+          },
+          boxShadow: {
+            panel: '0 18px 45px rgba(15, 23, 42, 0.18)',
+            float: '0 8px 24px rgba(15, 23, 42, 0.16)'
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- Leaflet.js 與免費 OpenStreetMap 底圖。 -->
+  <link rel="stylesheet" href="leaflet.css">
+  <link rel="stylesheet" href="MarkerCluster.css">
+  <link rel="stylesheet" href="MarkerCluster.Default.css">
+  <script src="leaflet.js"></script>
+  <script src="leaflet.markercluster.js"></script>
+
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body { overflow: hidden; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    #app {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      overflow: hidden;
+    }
+    #app > main {
+      display: block;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      min-width: 100%;
+      min-height: 100%;
+    }
+    #map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      min-width: 100%;
+      min-height: 100%;
+      background: #dbeafe;
+      contain: layout paint;
+    }
+    /* Tailwind 的 img max-width 規則不能套用在 Leaflet 圖磚上。 */
+    .leaflet-container .leaflet-tile {
+      max-width: none !important;
+      max-height: none !important;
+    }
+    .leaflet-control-zoom { margin-bottom: max(5.5rem, env(safe-area-inset-bottom)) !important; }
+    #map .leaflet-top { top: 76px; }
+    .leaflet-control-attribution { max-width: calc(100vw - 1rem); font-size: 10px; }
+    .user-location-dot {
+      width: 22px; height: 22px; border: 4px solid white; border-radius: 999px;
+      background: #2563eb; box-shadow: 0 0 0 7px rgba(37, 99, 235, 0.22), 0 3px 10px rgba(15, 23, 42, 0.35);
+    }
+    .selected-pin {
+      position: relative; width: 24px; height: 24px; border: 4px solid white; border-radius: 50% 50% 50% 0;
+      background: #facc15; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.35); transform: rotate(-45deg);
+    }
+    .selected-pin::after {
+      content: ''; position: absolute; inset: 5px; border-radius: 999px; background: #713f12;
+    }
+    .topic-folder > summary { list-style: none; }
+    .topic-folder > summary::-webkit-details-marker { display: none; }
+    .topic-folder[open] .folder-chevron { transform: rotate(180deg); }
+    .topic-folder[open] .folder-content { border-top-color: #e2e8f0; }
+    .transport-bus-icon, .transport-bike-icon { background: transparent; border: 0; }
+    .transport-bus-symbol {
+      display: grid; width: 34px; height: 34px; place-items: center; border: 3px solid white; border-radius: 7px;
+      background: #0f766e; color: white; font-size: 19px; line-height: 1; box-shadow: 0 4px 12px rgba(15, 23, 42, .35);
+    }
+    .transport-bike-symbol {
+      display: grid; width: 34px; height: 34px; place-items: center; border: 3px solid white; border-radius: 999px;
+      background: #0369a1; color: white; font-size: 18px; line-height: 1; box-shadow: 0 4px 12px rgba(15, 23, 42, .35);
+    }
+    .bike-cluster { background: transparent; border: 0; }
+    .bike-cluster-symbol {
+      display: grid; place-items: center; border: 4px solid rgba(255, 255, 255, .92); border-radius: 999px;
+      background: #0369a1; color: white; font-weight: 850; line-height: 1; box-shadow: 0 5px 16px rgba(15, 23, 42, .38);
+    }
+    .bike-cluster-symbol span { display: block; font-size: 11px; font-weight: 700; }
+    .transport-layer-control {
+      display: grid; gap: 5px; width: 188px; padding: 8px; border: 1px solid rgba(15, 23, 42, .16);
+      border-radius: 6px; background: rgba(255, 255, 255, .96); box-shadow: 0 2px 10px rgba(15, 23, 42, .2);
+    }
+    .transport-layer-toggle {
+      display: flex; width: 100%; min-height: 38px; align-items: center; gap: 8px; padding: 7px 9px;
+      border: 1px solid #cbd5e1; border-radius: 5px; background: #fff; color: #334155;
+      font-size: 13px; font-weight: 750; line-height: 1.25; text-align: left; cursor: pointer;
+    }
+    .transport-layer-toggle:hover { border-color: #0f766e; background: #f0fdfa; }
+    .transport-layer-toggle:focus-visible { outline: 3px solid rgba(13, 148, 136, .3); outline-offset: 1px; }
+    .transport-layer-toggle[aria-pressed="true"] { border-color: #0f766e; background: #ccfbf1; color: #115e59; }
+    .transport-layer-toggle[aria-pressed="false"] { opacity: .68; }
+    .transport-layer-state { display: inline-flex; min-width: 38px; align-items: center; justify-content: flex-end; gap: 4px; margin-left: auto; font-size: 11px; font-weight: 800; white-space: nowrap; }
+    .transport-layer-toggle[aria-pressed="true"]:not([data-loading="true"]) .transport-layer-state::after { content: '顯示'; }
+    .transport-layer-toggle[aria-pressed="false"]:not([data-loading="true"]) .transport-layer-state::after { content: '隱藏'; }
+    .transport-layer-toggle[data-loading="true"] .transport-layer-state::before {
+      content: ''; width: 12px; height: 12px; flex: 0 0 12px; border: 2px solid currentColor; border-right-color: transparent;
+      border-radius: 999px; animation: transport-loading-spin .7s linear infinite;
+    }
+    .transport-layer-toggle[data-loading="true"] .transport-layer-state::after { content: '讀取中'; }
+    @keyframes transport-loading-spin { to { transform: rotate(360deg); } }
+    .transport-layer-control .traffic-key { margin-right: 0; }
+    .leaflet-control-layers { border-radius: 6px; font-size: 13px; font-weight: 700; }
+    .leaflet-control-layers-expanded { padding: 9px 12px; }
+    .traffic-key { display: inline-block; width: 18px; height: 5px; margin-right: 6px; border-radius: 2px; vertical-align: middle; }
+    .transport-popup { min-width: 190px; line-height: 1.55; }
+    .transport-popup strong { display: block; margin-bottom: 4px; font-size: 14px; }
+    .transport-popup p { margin: 2px 0; }
+    .bus-stop-icon { background: transparent; border: 0; }
+    .bus-stop-symbol {
+      display: grid; width: 28px; height: 28px; place-items: center; border: 3px solid white; border-radius: 5px;
+      background: #7c3aed; color: white; font-size: 15px; font-weight: 900; box-shadow: 0 3px 10px rgba(15, 23, 42, .32);
+    }
+    .saved-place-icon { background: transparent; border: 0; }
+    .saved-place-symbol {
+      display: grid; width: 30px; height: 30px; place-items: center; border: 3px solid white; border-radius: 999px;
+      background: #be123c; color: white; box-shadow: 0 3px 10px rgba(15, 23, 42, .3);
+    }
+    .route-stop-list { max-height: 330px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
+    .route-stop-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+    .route-stop-item:last-child { border-bottom: 0; }
+    .route-stop-item.is-next { background: #fef3c7; color: #92400e; font-weight: 800; }
+    .personal-list button { width: 100%; text-align: left; }
+    .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body class="bg-slate-200 text-slate-900 antialiased">
+  <div id="app" class="relative isolate overflow-hidden">
+    <!-- 地圖是進站後的第一層及主要操作介面。 -->
+    <main class="absolute inset-0" aria-label="智慧生活互動地圖">
+      <div id="map"></div>
+    </main>
+
+    <!-- 懸浮頂部導覽列：縣市選項由 api_config.json 動態建立。 -->
+    <header class="pointer-events-none absolute inset-x-0 top-0 z-[1000] p-3 sm:p-4">
+      <div class="pointer-events-auto mx-auto flex max-w-7xl items-center gap-2 rounded-lg border border-white/70 bg-white/95 p-2 shadow-float backdrop-blur-md sm:gap-4 sm:px-3">
+        <div class="hidden min-w-0 items-center gap-3 sm:flex">
+          <span class="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-brand-700 text-xl text-white" aria-hidden="true">⌖</span>
+          <div class="min-w-0">
+            <h1 id="app-title" class="truncate text-sm font-bold lg:text-base">台灣智慧生活資訊門戶</h1>
+            <p id="location-status" class="truncate text-xs text-slate-500" aria-live="polite">正在取得目前位置...</p>
+          </div>
+        </div>
+
+        <button id="menu-button" type="button" class="inline-flex h-10 shrink-0 items-center gap-2 rounded-md bg-slate-900 px-3 text-sm font-bold text-white transition hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2" aria-controls="service-drawer" aria-expanded="false" aria-label="服務選單">
+          <span class="text-base" aria-hidden="true">▦</span>
+          <span class="hidden sm:inline">服務選單</span>
+        </button>
+
+        <button id="related-links-button" type="button" class="inline-flex h-10 shrink-0 items-center rounded-md border border-slate-300 bg-white px-2 text-sm font-bold text-slate-800 transition hover:border-brand-600 sm:px-3 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-controls="related-links-modal" aria-expanded="false"><span class="hidden sm:inline">相關連結</span><span class="sm:hidden">連結</span></button>
+
+        <form id="map-search-form" class="relative flex h-10 min-w-[6rem] flex-1 sm:max-w-xs" role="search">
+          <label for="map-search-input" class="sr-only">搜尋臺灣地點</label>
+          <input id="map-search-input" class="min-w-0 flex-1 rounded-l-md border border-r-0 border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-600 focus:ring-2 focus:ring-inset focus:ring-brand-100" type="search" maxlength="100" autocomplete="off" placeholder="搜尋臺灣地點" aria-controls="map-search-results" aria-expanded="false">
+          <button id="map-search-button" type="submit" class="shrink-0 rounded-r-md bg-brand-700 px-3 text-sm font-bold text-white hover:bg-brand-800 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-label="搜尋地點">搜尋</button>
+          <div id="map-search-results" class="absolute right-0 top-[calc(100%+8px)] z-[1500] hidden max-h-80 w-[min(92vw,420px)] overflow-y-auto rounded-md border border-slate-200 bg-white p-2 shadow-panel" role="listbox" aria-label="地點搜尋結果"></div>
+        </form>
+
+        <label class="ml-auto hidden min-w-0 items-center gap-2 text-sm font-semibold text-slate-700 sm:flex">
+          <span class="hidden shrink-0 lg:inline">目前縣市</span>
+          <select id="city-select" class="h-10 min-w-0 max-w-40 rounded-md border border-slate-300 bg-white px-2 text-sm font-semibold outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-100 disabled:cursor-wait disabled:bg-slate-100 sm:min-w-36 sm:px-3" disabled>
+            <option>載入中...</option>
+          </select>
+        </label>
+
+        <button id="share-button" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-300 bg-white text-lg text-brand-800 transition hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600" title="分享目前地圖" aria-label="分享目前地圖">↗</button>
+        <button id="locate-button" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-300 bg-white text-xl text-brand-800 transition hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600" title="重新定位" aria-label="重新定位">◎</button>
+      </div>
+    </header>
+
+    <div id="request-message" class="pointer-events-none absolute left-1/2 top-20 z-[1400] hidden max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-center text-sm font-bold text-red-800 shadow-lg" role="alert" aria-live="assertive"></div>
+
+    <!-- 地圖操作提示，在第一次點圖後淡出。 -->
+    <div id="map-hint" class="pointer-events-none absolute bottom-20 left-1/2 z-[900] -translate-x-1/2 rounded-md bg-slate-900/85 px-4 py-2 text-center text-xs font-medium text-white shadow-lg backdrop-blur sm:bottom-6">
+      點選地圖查看地方資訊；交通圖層可在左上角切換
+    </div>
+
+    <!-- 桌機為右側面板，手機改為底部抽屜。 -->
+    <aside id="info-panel" class="safe-bottom absolute bottom-0 left-0 right-0 z-[1100] max-h-[78dvh] translate-y-full overflow-y-auto rounded-t-lg border-t border-slate-200 bg-white shadow-panel transition-transform duration-300 ease-out md:bottom-4 md:left-auto md:right-4 md:top-24 md:max-h-none md:w-[430px] md:translate-x-[calc(100%+2rem)] md:translate-y-0 md:rounded-lg md:border" aria-labelledby="info-title">
+      <div class="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur">
+        <div>
+          <p class="text-xs font-bold text-brand-700">地方深度報導</p>
+          <h2 id="info-title" class="mt-1 text-lg font-bold">辨識當地區域中</h2>
+        </div>
+        <button id="close-info-button" type="button" class="grid h-9 w-9 place-items-center rounded-md text-xl text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-label="關閉位置資訊">×</button>
+      </div>
+      <div id="info-content" class="p-5"></div>
+    </aside>
+
+    <!-- 服務選單遮罩與左側抽屜。 -->
+    <div id="drawer-backdrop" class="absolute inset-0 z-[1190] hidden bg-slate-950/40 opacity-0 backdrop-blur-[2px] transition-opacity duration-300"></div>
+    <aside id="service-drawer" class="safe-bottom absolute bottom-0 left-0 top-0 z-[1200] flex w-[min(92vw,430px)] -translate-x-full flex-col bg-white shadow-panel transition-transform duration-300 ease-out" aria-labelledby="drawer-title">
+      <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+        <div>
+          <p id="drawer-city" class="text-xs font-bold text-brand-700">智慧生活服務</p>
+          <h2 id="drawer-title" class="mt-1 text-xl font-bold">服務選單</h2>
+        </div>
+        <button id="close-menu-button" type="button" class="grid h-10 w-10 place-items-center rounded-md text-2xl text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-label="關閉服務選單">×</button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-4">
+        <section class="mb-4 border-b border-slate-200 pb-4" aria-labelledby="personal-tools-title">
+          <h3 id="personal-tools-title" class="text-sm font-bold text-slate-900">個人化交通</h3>
+          <div class="mt-3 grid grid-cols-[1fr_1fr] gap-2">
+            <select id="place-type-select" class="h-10 rounded-md border border-slate-300 bg-white px-2 text-sm font-semibold">
+              <option value="home">住家</option><option value="school">學校</option><option value="work">工作地點</option>
+            </select>
+            <button id="save-center-button" type="button" class="h-10 rounded-md bg-brand-700 px-3 text-sm font-bold text-white hover:bg-brand-800">標註地圖中心</button>
+          </div>
+          <div class="mt-3 flex items-center gap-2">
+            <label for="refresh-interval-select" class="shrink-0 text-xs font-bold text-slate-600">更新頻率</label>
+            <select id="refresh-interval-select" class="h-9 min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 text-sm">
+              <option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分鐘</option><option value="120">2 分鐘</option><option value="300">5 分鐘</option>
+            </select>
+            <button id="notification-button" type="button" class="h-9 rounded-md border border-slate-300 bg-white px-3 text-xs font-bold hover:bg-slate-50">開啟通知</button>
+          </div>
+          <p id="personal-status" class="mt-2 text-xs leading-5 text-slate-500" aria-live="polite"></p>
+          <div id="saved-place-list" class="personal-list mt-3 space-y-2"></div>
+        </section>
+        <div id="category-grid" class="grid grid-cols-3 gap-2" aria-live="polite"></div>
+        <div id="category-loading" class="grid min-h-48 place-items-center text-sm text-slate-500" role="status">正在載入服務...</div>
+        <div id="config-error" class="hidden rounded-md border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-800" role="alert">
+          <strong class="block">設定檔載入失敗</strong>
+          <span id="config-error-message"></span>
+          <button id="retry-button" type="button" class="mt-3 rounded-md bg-red-700 px-3 py-2 font-bold text-white hover:bg-red-800">重新載入</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 常用網站依主題整理，內容區可獨立捲動。 -->
+    <div id="related-links-modal" class="absolute inset-0 z-[1350] hidden items-center justify-center bg-slate-950/50 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200" role="dialog" aria-modal="true" aria-labelledby="related-links-title">
+      <div id="related-links-card" class="flex max-h-[min(88dvh,760px)] w-full max-w-2xl translate-y-3 flex-col rounded-lg bg-white shadow-panel transition-transform duration-200">
+        <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <div>
+            <p class="text-xs font-bold text-brand-700">常用網站</p>
+            <h2 id="related-links-title" class="mt-1 text-xl font-bold">相關連結</h2>
+          </div>
+          <button id="close-related-links-button" type="button" class="grid h-10 w-10 place-items-center rounded-md text-2xl text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-label="關閉相關連結">×</button>
+        </div>
+        <div class="overflow-y-auto px-5 pb-5">
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-government-title">
+            <h3 id="links-government-title" class="text-sm font-bold text-slate-950">政府與公共服務</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">我的E政府 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://mydata.nat.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=mydata.nat.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">MyData 個人化資料自主運用 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://data.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=data.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">政府資料開放平臺 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.etax.nat.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.etax.nat.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">財政部稅務入口網 <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-transport-title">
+            <h3 id="links-transport-title" class="text-sm font-bold text-slate-950">交通與旅運</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.railway.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.railway.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">國營臺灣鐵路公司 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.thsrc.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.thsrc.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">台灣高鐵 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://1968.freeway.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=1968.freeway.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">高速公路 1968 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.taiwanbus.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.taiwanbus.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">公路客運即時動態資訊網 <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-weather-title">
+            <h3 id="links-weather-title" class="text-sm font-bold text-slate-950">天氣與防災</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.cwa.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.cwa.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">中央氣象署 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.ncdr.nat.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.ncdr.nat.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">國家災害防救科技中心 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://fhy.wra.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=fhy.wra.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">水利署防災資訊服務網 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://scweb.cwa.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=scweb.cwa.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">地震測報中心 <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-shopping-title">
+            <h3 id="links-shopping-title" class="text-sm font-bold text-slate-950">購物與電商</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.momoshop.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.momoshop.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">momo 購物網 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://shopee.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=shopee.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">蝦皮購物 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://24h.pchome.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=24h.pchome.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">PChome 24h 購物 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.ruten.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.ruten.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">露天市集 <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-media-title">
+            <h3 id="links-media-title" class="text-sm font-bold text-slate-950">影音與音樂</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.youtube.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">YouTube <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.netflix.com/tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.netflix.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Netflix <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://open.spotify.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=open.spotify.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Spotify <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.kkbox.com/tw/tc/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.kkbox.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">KKBOX <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-office-title">
+            <h3 id="links-office-title" class="text-sm font-bold text-slate-950">辦公與協作</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.microsoft365.com/launch/excel" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.microsoft365.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Microsoft Excel <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://drive.google.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=drive.google.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Google Drive <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.canva.com/zh_tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.canva.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Canva <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.notion.so/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.notion.so&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Notion <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-finance-title">
+            <h3 id="links-finance-title" class="text-sm font-bold text-slate-950">金融、繳費與發票</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://ipost.post.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=ipost.post.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">網路郵局 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.einvoice.nat.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.einvoice.nat.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">財政部電子發票整合服務平臺 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.twse.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.twse.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">臺灣證券交易所 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://ebill.ba.org.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=ebill.ba.org.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">e-Bill 全國繳費網 <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-news-title">
+            <h3 id="links-news-title" class="text-sm font-bold text-slate-950">新聞與即時資訊</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.cna.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.cna.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">中央通訊社 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://news.pts.org.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=news.pts.org.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">公視新聞網 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://udn.com/news/index" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=udn.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">聯合新聞網 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.cnyes.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.cnyes.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">鉅亨網 <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-maps-title">
+            <h3 id="links-maps-title" class="text-sm font-bold text-slate-950">地圖與旅遊</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.google.com/maps/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.google.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Google 地圖 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.taiwan.net.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.taiwan.net.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">交通部觀光署臺灣觀光資訊網 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.booking.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.booking.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Booking.com <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.agoda.com/zh-tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.agoda.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Agoda <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-social-title">
+            <h3 id="links-social-title" class="text-sm font-bold text-slate-950">社群與通訊</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.facebook.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.facebook.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Facebook <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.instagram.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.instagram.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Instagram <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://today.line.me/tw/v2/tab" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=today.line.me&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">LINE TODAY <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.dcard.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.dcard.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Dcard <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-food-title">
+            <h3 id="links-food-title" class="text-sm font-bold text-slate-950">餐飲與外送</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.foodpanda.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.foodpanda.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">foodpanda <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.ubereats.com/tw" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.ubereats.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Uber Eats <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://ifoodie.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=ifoodie.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">愛食記 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://tw.openrice.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=tw.openrice.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">OpenRice 台灣開飯喇 <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-learning-title">
+            <h3 id="links-learning-title" class="text-sm font-bold text-slate-950">學習與知識</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://zh.wikipedia.org/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=zh.wikipedia.org&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">維基百科 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://hahow.in/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=hahow.in&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Hahow 好學校 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.coursera.org/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.coursera.org&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Coursera <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.ted.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.ted.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">TED <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-jobs-title">
+            <h3 id="links-jobs-title" class="text-sm font-bold text-slate-950">求職與職涯</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.104.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.104.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">104 人力銀行 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.1111.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.1111.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">1111 人力銀行 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.cake.me/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.cake.me&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Cake 求職平臺 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.yes123.com.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.yes123.com.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">yes123 求職網 <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="border-b border-slate-200 py-5" aria-labelledby="links-ai-cloud-title">
+            <h3 id="links-ai-cloud-title" class="text-sm font-bold text-slate-950">AI 與雲端工具</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=chatgpt.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">ChatGPT <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://gemini.google.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=gemini.google.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Google Gemini <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://copilot.microsoft.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=copilot.microsoft.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Microsoft Copilot <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.dropbox.com/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.dropbox.com&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">Dropbox <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+          <section class="py-5" aria-labelledby="links-health-title">
+            <h3 id="links-health-title" class="text-sm font-bold text-slate-950">健康與生活安全</h3>
+            <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.mohw.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.mohw.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">衛生福利部 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.cdc.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.cdc.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">疾病管制署 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://www.nhi.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=www.nhi.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">中央健康保險署 <span aria-hidden="true">↗</span></span></a>
+              <a class="flex min-h-12 items-center gap-3 rounded-md border border-slate-200 px-3 py-3 text-sm font-bold text-brand-800 hover:border-brand-500 hover:bg-brand-50" href="https://165.npa.gov.tw/" target="_blank" rel="noopener noreferrer"><img class="h-7 w-7 shrink-0 rounded object-contain" src="https://www.google.com/s2/favicons?domain=165.npa.gov.tw&sz=64" alt="" loading="lazy" referrerpolicy="no-referrer"><span class="min-w-0 flex-1">165 全民防騙網 <span aria-hidden="true">↗</span></span></a>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- 分類 API 詳情 Modal。 -->
+    <div id="category-modal" class="absolute inset-0 z-[1300] hidden items-center justify-center bg-slate-950/50 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div id="modal-card" class="flex max-h-[min(88dvh,760px)] w-full max-w-2xl translate-y-3 flex-col rounded-lg bg-white shadow-panel transition-transform duration-200">
+        <div class="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+          <div class="flex min-w-0 items-center gap-3">
+            <span id="modal-icon" class="grid h-11 w-11 shrink-0 place-items-center rounded-md bg-brand-50 text-2xl" aria-hidden="true"></span>
+            <div class="min-w-0">
+              <p id="modal-city" class="truncate text-xs font-bold text-brand-700"></p>
+              <h2 id="modal-title" class="truncate text-lg font-bold">服務資訊</h2>
+            </div>
+          </div>
+          <button id="close-modal-button" type="button" class="grid h-9 w-9 shrink-0 place-items-center rounded-md text-xl text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-label="關閉服務資訊">×</button>
+        </div>
+        <div class="overflow-y-auto p-5">
+          <div class="border-b border-slate-200 pb-5">
+            <label for="modal-district-select" class="text-xs font-bold text-slate-600">當地區域（鄉鎮市區）</label>
+            <select id="modal-district-select" class="mt-2 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100"></select>
+          </div>
+          <article id="district-report" class="border-b border-slate-200 py-5" aria-live="polite">
+            <p id="district-report-kicker" class="text-xs font-bold text-brand-700"></p>
+            <h3 id="district-report-title" class="mt-2 text-xl font-bold leading-7 text-slate-950"></h3>
+            <p id="district-report-lead" class="mt-3 text-base font-medium leading-7 text-slate-700"></p>
+            <div class="mt-4 space-y-4 text-sm leading-7 text-slate-700">
+              <p id="district-report-body-one"></p>
+              <p id="district-report-body-two"></p>
+              <p id="district-report-body-three"></p>
+            </div>
+            <p class="mt-4 border-l-4 border-slate-300 pl-3 text-xs leading-5 text-slate-500">本區塊僅整理政府資料開放平臺實際回傳的資料集內容；資料正確性與更新時間以發布機關公告為準。</p>
+          </article>
+          <div id="modal-status" class="mt-5 flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600" role="status">
+            <span class="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>
+            正在搜尋政府開放資料...
+          </div>
+          <div id="modal-results" class="hidden">
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <p class="text-sm font-bold text-slate-700">政府開放資料</p>
+              <a id="modal-catalog-link" class="shrink-0 text-xs font-bold text-brand-800 hover:underline" href="https://data.gov.tw/datasets/search" target="_blank" rel="noopener noreferrer">查看完整清單</a>
+            </div>
+            <div id="modal-dataset-list" class="space-y-2"></div>
+          </div>
+          <div id="modal-empty" class="hidden rounded-md border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600"></div>
+          <a id="modal-api-link" class="mt-4 hidden break-all rounded-md border border-brand-100 bg-brand-50 p-3 text-sm font-medium leading-6 text-brand-800 hover:underline" href="about:blank" target="_blank" rel="noopener noreferrer">開啟縣市專屬 API</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE_URL = window.location.origin;
+    const TAIPEI_101 = [25.0336, 121.5648];
+    const FALLBACK_ZOOM = 16;
+    const TAIWAN_BOUNDS = [[21.5, 119.0], [26.0, 122.5]];
+    const state = {
+      config: null,
+      selectedCityCode: null,
+      map: null,
+      userMarker: null,
+      fallbackMarker: null,
+      selectedMarker: null,
+      searchMarker: null,
+      pendingLocation: null,
+      usingFallback: false,
+      searchTimer: null,
+      resizeTimer: null,
+      resizeFrame: null,
+      mapResizeObserver: null,
+      categoryAbortController: null,
+      geocodeAbortController: null,
+      mapSearchAbortController: null,
+      officialDataAbortController: null,
+      transportAbortController: null,
+      transportRefreshTimer: null,
+      transportRetryCount: 0,
+      selectedTransportLocation: null,
+      loadedBikeCityCode: null,
+      loadedBusStopCityCode: null,
+      lastRoadPayload: null,
+      lastTrafficPayload: null,
+      lastTransportFetch: { roads: null, traffic: null, bike: null },
+      transportLayers: null,
+      busVehicleLayer: null,
+      busStopLayer: null,
+      transportLayerControl: null,
+      transportLayerButtons: {},
+      transportLoadingSequence: { traffic: 0, bus: 0, bike: 0 },
+      transportHasInitialized: false,
+      loadedTransportCityCode: null,
+      trafficRenderer: null,
+      lastTrafficRoads: [],
+      mapClickSequence: 0,
+      notificationTimer: null,
+      requestMessageTimer: null,
+      lastDegradedNoticeAt: 0,
+      notificationSnapshots: {},
+      lastSafetyNotificationCheck: 0,
+      lastFavoriteRefreshAt: 0,
+      savedPlaces: [],
+      selectedBusStop: null,
+      selectedBikeStation: null,
+      savedPlaceLayer: null,
+      busRouteLayer: null,
+      currentCategory: null,
+      selectedDistrictByCity: {}
+    };
+
+    const elements = {
+      map: document.getElementById('map'),
+      appTitle: document.getElementById('app-title'),
+      locationStatus: document.getElementById('location-status'),
+      citySelect: document.getElementById('city-select'),
+      shareButton: document.getElementById('share-button'),
+      locateButton: document.getElementById('locate-button'),
+      mapHint: document.getElementById('map-hint'),
+      requestMessage: document.getElementById('request-message'),
+      infoPanel: document.getElementById('info-panel'),
+      infoTitle: document.getElementById('info-title'),
+      infoContent: document.getElementById('info-content'),
+      closeInfoButton: document.getElementById('close-info-button'),
+      menuButton: document.getElementById('menu-button'),
+      relatedLinksButton: document.getElementById('related-links-button'),
+      relatedLinksModal: document.getElementById('related-links-modal'),
+      relatedLinksCard: document.getElementById('related-links-card'),
+      closeRelatedLinksButton: document.getElementById('close-related-links-button'),
+      mapSearchForm: document.getElementById('map-search-form'),
+      mapSearchInput: document.getElementById('map-search-input'),
+      mapSearchButton: document.getElementById('map-search-button'),
+      mapSearchResults: document.getElementById('map-search-results'),
+      serviceDrawer: document.getElementById('service-drawer'),
+      drawerBackdrop: document.getElementById('drawer-backdrop'),
+      closeMenuButton: document.getElementById('close-menu-button'),
+      placeTypeSelect: document.getElementById('place-type-select'),
+      saveCenterButton: document.getElementById('save-center-button'),
+      refreshIntervalSelect: document.getElementById('refresh-interval-select'),
+      notificationButton: document.getElementById('notification-button'),
+      personalStatus: document.getElementById('personal-status'),
+      savedPlaceList: document.getElementById('saved-place-list'),
+      drawerCity: document.getElementById('drawer-city'),
+      categoryGrid: document.getElementById('category-grid'),
+      categoryLoading: document.getElementById('category-loading'),
+      configError: document.getElementById('config-error'),
+      configErrorMessage: document.getElementById('config-error-message'),
+      retryButton: document.getElementById('retry-button'),
+      categoryModal: document.getElementById('category-modal'),
+      modalCard: document.getElementById('modal-card'),
+      modalIcon: document.getElementById('modal-icon'),
+      modalCity: document.getElementById('modal-city'),
+      modalTitle: document.getElementById('modal-title'),
+      modalDistrictSelect: document.getElementById('modal-district-select'),
+      districtReportKicker: document.getElementById('district-report-kicker'),
+      districtReportTitle: document.getElementById('district-report-title'),
+      districtReportLead: document.getElementById('district-report-lead'),
+      districtReportBodyOne: document.getElementById('district-report-body-one'),
+      districtReportBodyTwo: document.getElementById('district-report-body-two'),
+      districtReportBodyThree: document.getElementById('district-report-body-three'),
+      modalStatus: document.getElementById('modal-status'),
+      modalResults: document.getElementById('modal-results'),
+      modalDatasetList: document.getElementById('modal-dataset-list'),
+      modalCatalogLink: document.getElementById('modal-catalog-link'),
+      modalApiLink: document.getElementById('modal-api-link'),
+      modalEmpty: document.getElementById('modal-empty'),
+      closeModalButton: document.getElementById('close-modal-button')
+    };
+
+    const districtsByCity = {
+      Taipei: ['中正區', '大同區', '中山區', '松山區', '大安區', '萬華區', '信義區', '士林區', '北投區', '內湖區', '南港區', '文山區'],
+      NewTaipei: ['板橋區', '三重區', '中和區', '永和區', '新莊區', '新店區', '樹林區', '鶯歌區', '三峽區', '淡水區', '汐止區', '瑞芳區', '土城區', '蘆洲區', '五股區', '泰山區', '林口區', '深坑區', '石碇區', '坪林區', '三芝區', '石門區', '八里區', '平溪區', '雙溪區', '貢寮區', '金山區', '萬里區', '烏來區'],
+      Keelung: ['仁愛區', '信義區', '中正區', '中山區', '安樂區', '暖暖區', '七堵區'],
+      Taoyuan: ['桃園區', '中壢區', '平鎮區', '八德區', '楊梅區', '蘆竹區', '大溪區', '龍潭區', '龜山區', '大園區', '觀音區', '新屋區', '復興區'],
+      HsinchuCity: ['東區', '北區', '香山區'],
+      HsinchuCounty: ['竹北市', '竹東鎮', '新埔鎮', '關西鎮', '湖口鄉', '新豐鄉', '芎林鄉', '橫山鄉', '北埔鄉', '寶山鄉', '峨眉鄉', '尖石鄉', '五峰鄉'],
+      Miaoli: ['苗栗市', '頭份市', '竹南鎮', '後龍鎮', '通霄鎮', '苑裡鎮', '卓蘭鎮', '造橋鄉', '西湖鄉', '頭屋鄉', '公館鄉', '銅鑼鄉', '三義鄉', '大湖鄉', '獅潭鄉', '三灣鄉', '南庄鄉', '泰安鄉'],
+      Taichung: ['中區', '東區', '南區', '西區', '北區', '西屯區', '南屯區', '北屯區', '豐原區', '東勢區', '大甲區', '清水區', '沙鹿區', '梧棲區', '后里區', '神岡區', '潭子區', '大雅區', '新社區', '石岡區', '外埔區', '大安區', '烏日區', '大肚區', '龍井區', '霧峰區', '太平區', '大里區', '和平區'],
+      Changhua: ['彰化市', '員林市', '鹿港鎮', '和美鎮', '北斗鎮', '溪湖鎮', '田中鎮', '二林鎮', '線西鄉', '伸港鄉', '福興鄉', '秀水鄉', '花壇鄉', '芬園鄉', '大村鄉', '埔鹽鄉', '埔心鄉', '永靖鄉', '社頭鄉', '二水鄉', '田尾鄉', '埤頭鄉', '芳苑鄉', '大城鄉', '竹塘鄉', '溪州鄉'],
+      Nantou: ['南投市', '埔里鎮', '草屯鎮', '竹山鎮', '集集鎮', '名間鄉', '鹿谷鄉', '中寮鄉', '魚池鄉', '國姓鄉', '水里鄉', '信義鄉', '仁愛鄉'],
+      Yunlin: ['斗六市', '斗南鎮', '虎尾鎮', '西螺鎮', '土庫鎮', '北港鎮', '古坑鄉', '大埤鄉', '莿桐鄉', '林內鄉', '二崙鄉', '崙背鄉', '麥寮鄉', '東勢鄉', '褒忠鄉', '臺西鄉', '元長鄉', '四湖鄉', '口湖鄉', '水林鄉'],
+      ChiayiCity: ['東區', '西區'],
+      ChiayiCounty: ['太保市', '朴子市', '布袋鎮', '大林鎮', '民雄鄉', '溪口鄉', '新港鄉', '六腳鄉', '東石鄉', '義竹鄉', '鹿草鄉', '水上鄉', '中埔鄉', '竹崎鄉', '梅山鄉', '番路鄉', '大埔鄉', '阿里山鄉'],
+      Tainan: ['中西區', '東區', '南區', '北區', '安平區', '安南區', '永康區', '歸仁區', '新化區', '左鎮區', '玉井區', '楠西區', '南化區', '仁德區', '關廟區', '龍崎區', '官田區', '麻豆區', '佳里區', '西港區', '七股區', '將軍區', '學甲區', '北門區', '新營區', '後壁區', '白河區', '東山區', '六甲區', '下營區', '柳營區', '鹽水區', '善化區', '大內區', '山上區', '新市區', '安定區'],
+      Kaohsiung: ['楠梓區', '左營區', '鼓山區', '三民區', '鹽埕區', '前金區', '新興區', '苓雅區', '前鎮區', '旗津區', '小港區', '鳳山區', '林園區', '大寮區', '大樹區', '大社區', '仁武區', '鳥松區', '岡山區', '橋頭區', '燕巢區', '田寮區', '阿蓮區', '路竹區', '湖內區', '茄萣區', '永安區', '彌陀區', '梓官區', '旗山區', '美濃區', '六龜區', '甲仙區', '杉林區', '內門區', '茂林區', '桃源區', '那瑪夏區'],
+      Pingtung: ['屏東市', '潮州鎮', '東港鎮', '恆春鎮', '萬丹鄉', '長治鄉', '麟洛鄉', '九如鄉', '里港鄉', '鹽埔鄉', '高樹鄉', '萬巒鄉', '內埔鄉', '竹田鄉', '新埤鄉', '枋寮鄉', '新園鄉', '崁頂鄉', '林邊鄉', '南州鄉', '佳冬鄉', '琉球鄉', '車城鄉', '滿州鄉', '枋山鄉', '三地門鄉', '霧臺鄉', '瑪家鄉', '泰武鄉', '來義鄉', '春日鄉', '獅子鄉', '牡丹鄉'],
+      Yilan: ['宜蘭市', '羅東鎮', '蘇澳鎮', '頭城鎮', '礁溪鄉', '壯圍鄉', '員山鄉', '冬山鄉', '五結鄉', '三星鄉', '大同鄉', '南澳鄉'],
+      Hualien: ['花蓮市', '鳳林鎮', '玉里鎮', '新城鄉', '吉安鄉', '壽豐鄉', '光復鄉', '豐濱鄉', '瑞穗鄉', '富里鄉', '秀林鄉', '萬榮鄉', '卓溪鄉'],
+      Taitung: ['臺東市', '成功鎮', '關山鎮', '卑南鄉', '鹿野鄉', '池上鄉', '東河鄉', '長濱鄉', '太麻里鄉', '大武鄉', '綠島鄉', '海端鄉', '延平鄉', '金峰鄉', '達仁鄉', '蘭嶼鄉'],
+      Penghu: ['馬公市', '湖西鄉', '白沙鄉', '西嶼鄉', '望安鄉', '七美鄉'],
+      Kinmen: ['金城鎮', '金湖鎮', '金沙鎮', '金寧鄉', '烈嶼鄉', '烏坵鄉'],
+      Matsu: ['南竿鄉', '北竿鄉', '莒光鄉', '東引鄉']
+    };
+
+    // 以台北 101 建立地圖，並以 maxBounds 將操作範圍限制在臺灣周遭。
+    function initializeMap() {
+      if (typeof window.L === 'undefined') {
+        throw new Error('Leaflet 尚未載入，地圖功能暫時無法使用');
+      }
+      if (state.map) return;
+      state.map = L.map('map', {
+        zoomControl: false,
+        zoomAnimation: true,
+        fadeAnimation: true,
+        minZoom: 7,
+        maxBounds: TAIWAN_BOUNDS,
+        maxBoundsViscosity: 1
+      }).setView(TAIPEI_101, FALLBACK_ZOOM);
+      const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        updateWhenIdle: false,
+        updateWhenZooming: true,
+        keepBuffer: 4,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(state.map);
+      tileLayer.on('tileerror', (event) => {
+        console.error('OpenStreetMap 圖磚載入失敗：', event.tile?.src || event);
+      });
+      L.control.zoom({ position: 'bottomright' }).addTo(state.map);
+      const busVehicleLayer = L.layerGroup();
+      const busStopLayer = L.layerGroup();
+      state.busVehicleLayer = busVehicleLayer;
+      state.busStopLayer = busStopLayer;
+      state.transportLayers = {
+        traffic: L.layerGroup().addTo(state.map),
+        bus: L.layerGroup([busStopLayer, busVehicleLayer]).addTo(state.map),
+        bike: L.markerClusterGroup({
+          chunkedLoading: true,
+          chunkInterval: 40,
+          chunkDelay: 15,
+          removeOutsideVisibleBounds: true,
+          animate: false,
+          animateAddingMarkers: false,
+          disableClusteringAtZoom: 17,
+          maxClusterRadius: (zoom) => Math.min(260, Math.max(45, 45 + Math.max(0, 15 - zoom) * 22)),
+          iconCreateFunction: createBikeClusterIcon
+        }).addTo(state.map)
+      };
+      state.trafficRenderer = L.canvas({ padding: 0.5 });
+      state.savedPlaceLayer = L.layerGroup().addTo(state.map);
+      state.busRouteLayer = L.layerGroup().addTo(state.map);
+      state.transportLayerControl = createTransportLayerControl();
+      state.transportLayerControl.addTo(state.map);
+      state.map.on('click', handleMapClick);
+      state.map.on('moveend zoomend', handleMapViewportChanged);
+      state.map.invalidateSize({ pan: false });
+      state.map.whenReady(() => {
+        state.map.invalidateSize({ pan: false });
+        refreshMapLayout([0, 100, 300, 700]);
+      });
+
+      if (window.ResizeObserver) {
+        state.mapResizeObserver = new ResizeObserver(() => scheduleMapResize(0));
+        state.mapResizeObserver.observe(elements.map);
+      }
+      refreshMapLayout([0, 100, 300, 700]);
+      window.setTimeout(() => {
+        if (state.map) state.map.invalidateSize();
+      }, 400);
+    }
+
+    // 尺寸變化完成後再於下一個繪製影格重算，避免 Leaflet 使用舊容器尺寸。
+    function scheduleMapResize(delay = 100) {
+      window.clearTimeout(state.resizeTimer);
+      state.resizeTimer = window.setTimeout(() => {
+        window.cancelAnimationFrame(state.resizeFrame);
+        state.resizeFrame = window.requestAnimationFrame(() => {
+          if (!state.map) return;
+          state.map.invalidateSize({ pan: false, debounceMoveend: true });
+        });
+      }, delay);
+    }
+
+    function refreshMapLayout(delays = [0, 100, 300]) {
+      delays.forEach((delay) => window.setTimeout(() => scheduleMapResize(0), delay));
+    }
+
+    function flyMapTo(center, zoom, options = {}) {
+      if (!state.map) return;
+      scheduleMapResize(0);
+      state.map.once('moveend', () => refreshMapLayout([0, 100, 300]));
+      state.map.flyTo(center, zoom, options);
+    }
+
+    // 保留 fetch 與 try...catch 降級：失敗時地圖仍可定位及點選使用。
+    async function loadConfig() {
+      console.log('開始讀取 api_config.json');
+      elements.categoryLoading?.classList.remove('hidden');
+      elements.configError?.classList.add('hidden');
+      if (elements.citySelect) elements.citySelect.disabled = true;
+
+      try {
+        const response = await fetch(new URL('/api_config.json', API_BASE_URL), { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const config = await response.json();
+        validateConfig(config);
+
+        state.config = config;
+        state.selectedCityCode = config.cities[config.defaultCity]
+          ? config.defaultCity
+          : Object.keys(config.cities)[0];
+        elements.appTitle.textContent = config.appName || '台灣智慧生活資訊門戶';
+        document.title = config.appName || '台灣智慧生活資訊門戶';
+        renderCityOptions();
+        renderCategories();
+        elements.categoryLoading?.classList.add('hidden');
+        if (elements.citySelect) elements.citySelect.disabled = false;
+
+        // 定位可能比設定檔更早完成，載入後再同步最近縣市。
+        if (state.pendingLocation) selectNearestCity(state.pendingLocation[0], state.pendingLocation[1]);
+        else if (state.usingFallback && config.cities.Taipei) setSelectedCity('Taipei');
+        else updateDrawerCity();
+        scheduleTransportLayerRefresh();
+      } catch (error) {
+        console.error('讀取 api_config.json 失敗：', error);
+        showConfigError(error);
+      }
+    }
+
+    function validateConfig(config) {
+      if (!config || typeof config !== 'object') throw new Error('JSON 根節點格式不正確');
+      if (!config.cities || Object.keys(config.cities).length === 0) throw new Error('缺少 cities 資料');
+      if (!Array.isArray(config.categories_definition)) throw new Error('缺少 categories_definition 陣列');
+    }
+
+    // 使用瀏覽器定位；部署環境必須使用 HTTPS 才能穩定取得權限。
+    function requestUserLocation() {
+      if (elements.locationStatus) elements.locationStatus.textContent = '正在取得目前位置...';
+      if (elements.locateButton) elements.locateButton.disabled = true;
+
+      if (!navigator.geolocation) {
+        useFallbackLocation('此瀏覽器不支援定位');
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        ({ coords }) => useUserLocation(coords.latitude, coords.longitude, coords.accuracy),
+        (error) => useFallbackLocation(getGeolocationErrorMessage(error)),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    }
+
+    function useUserLocation(latitude, longitude, accuracy) {
+      if (latitude < TAIWAN_BOUNDS[0][0] || latitude > TAIWAN_BOUNDS[1][0]
+        || longitude < TAIWAN_BOUNDS[0][1] || longitude > TAIWAN_BOUNDS[1][1]) {
+        useFallbackLocation('目前位置不在臺灣地圖範圍');
+        return;
+      }
+      const position = [latitude, longitude];
+      state.pendingLocation = position;
+      state.usingFallback = false;
+      elements.locateButton.disabled = false;
+      elements.locationStatus.textContent = `定位完成，誤差約 ${Math.round(accuracy)} 公尺`;
+
+      if (state.map) {
+        if (state.fallbackMarker) {
+          state.map.removeLayer(state.fallbackMarker);
+          state.fallbackMarker = null;
+        }
+        if (state.userMarker) state.userMarker.setLatLng(position);
+        else {
+          const userIcon = L.divIcon({ className: '', html: '<div class="user-location-dot"></div>', iconSize: [22, 22], iconAnchor: [11, 11] });
+          state.userMarker = L.marker(position, { icon: userIcon, zIndexOffset: 800 })
+            .addTo(state.map)
+            .bindPopup('<strong>你的位置</strong>');
+        }
+        flyMapTo(position, 16, { duration: 1.2 });
+      }
+      if (state.config) selectNearestCity(latitude, longitude);
+
+      // 定位視角設定後再次刷新，避免定位期間容器尺寸仍在變動。
+      scheduleMapResize(200);
+    }
+
+    function useFallbackLocation(reason) {
+      state.pendingLocation = null;
+      state.usingFallback = true;
+      elements.locateButton.disabled = false;
+      elements.locationStatus.textContent = `${reason}，已顯示台北 101`;
+      if (state.map) {
+        flyMapTo(TAIPEI_101, FALLBACK_ZOOM, { duration: 1 });
+        if (state.userMarker) {
+          state.map.removeLayer(state.userMarker);
+          state.userMarker = null;
+        }
+        if (!state.fallbackMarker) {
+          state.fallbackMarker = L.marker(TAIPEI_101)
+            .addTo(state.map)
+            .bindPopup('<strong>台北 101</strong><br>預設中心點')
+            .openPopup();
+        }
+      }
+      if (state.config && state.config.cities.Taipei) setSelectedCity('Taipei');
+
+      // 備援視角與 Marker 完成後再次強制補齊圖磚。
+      scheduleMapResize(200);
+    }
+
+    function getGeolocationErrorMessage(error) {
+      if (error.code === error.PERMISSION_DENIED) return '未取得定位權限';
+      if (error.code === error.TIMEOUT) return '定位逾時';
+      return '無法取得目前位置';
+    }
+
+    // 以 Haversine 球面距離找出與使用者最近的縣市中心。
+    function selectNearestCity(latitude, longitude) {
+      let nearestCode = null;
+      let shortestDistance = Infinity;
+      Object.entries(state.config.cities).forEach(([code, city]) => {
+        if (!Array.isArray(city.mapCenter) || city.mapCenter.length !== 2) return;
+        const distance = haversineDistance(latitude, longitude, city.mapCenter[0], city.mapCenter[1]);
+        if (distance < shortestDistance) {
+          shortestDistance = distance;
+          nearestCode = code;
+        }
+      });
+      if (nearestCode) setSelectedCity(nearestCode);
+    }
+
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+      const toRadians = (degree) => degree * Math.PI / 180;
+      const earthRadius = 6371;
+      const deltaLat = toRadians(lat2 - lat1);
+      const deltaLon = toRadians(lon2 - lon1);
+      const value = Math.sin(deltaLat / 2) ** 2
+        + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(deltaLon / 2) ** 2;
+      return earthRadius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+    }
+
+    function renderCityOptions() {
+      const fragment = document.createDocumentFragment();
+      elements.citySelect.replaceChildren();
+      Object.entries(state.config.cities).forEach(([code, city]) => {
+        const option = document.createElement('option');
+        option.value = code;
+        option.textContent = city.cityName;
+        fragment.appendChild(option);
+      });
+      elements.citySelect.appendChild(fragment);
+      elements.citySelect.value = state.selectedCityCode;
+    }
+
+    function setSelectedCity(code) {
+      if (!state.config.cities[code]) return;
+      state.selectedCityCode = code;
+      elements.citySelect.value = code;
+      updateDrawerCity();
+    }
+
+    function updateDrawerCity() {
+      if (!state.config || !state.selectedCityCode) return;
+      const location = state.selectedTransportLocation;
+      const coordinates = Array.isArray(location)
+        ? ` ・ 地圖中心 ${location[0].toFixed(4)}, ${location[1].toFixed(4)}`
+        : '';
+      elements.drawerCity.textContent = `${state.config.cities[state.selectedCityCode].cityName}智慧生活服務${coordinates}`;
+    }
+
+    function populateDistrictOptions(cityCode) {
+      const districts = districtsByCity[cityCode] || ['主要生活區'];
+      const preferredDistrict = state.selectedDistrictByCity[cityCode];
+      elements.modalDistrictSelect.replaceChildren();
+      districts.forEach((district) => {
+        const option = document.createElement('option');
+        option.value = district;
+        option.textContent = district;
+        elements.modalDistrictSelect.appendChild(option);
+      });
+      elements.modalDistrictSelect.value = districts.includes(preferredDistrict)
+        ? preferredDistrict
+        : districts[0];
+      state.selectedDistrictByCity[cityCode] = elements.modalDistrictSelect.value;
+    }
+
+    function renderDistrictReport(category, city, district) {
+      elements.districtReportKicker.textContent = `${city.cityName}・${district}｜政府資料開放平臺`;
+      elements.districtReportTitle.textContent = `【${district}${category.name}官方資料報導】`;
+      elements.districtReportLead.textContent = '本區塊僅根據政府資料開放平臺回傳的資料集標題、發布機關與詮釋摘要整理。';
+      elements.districtReportBodyOne.textContent = '正在讀取官方資料並整理報導內容。';
+      elements.districtReportBodyTwo.textContent = '';
+      elements.districtReportBodyThree.textContent = '';
+    }
+
+    // 原九宮格改在抽屜內依 categories_definition 動態渲染。
+    function renderCategories() {
+      console.log('開始渲染分類按鈕');
+      if (!elements.categoryGrid || !state.config) {
+        console.error('無法渲染分類按鈕：缺少 category-grid 或設定檔');
+        return;
+      }
+      const fragment = document.createDocumentFragment();
+      elements.categoryGrid.replaceChildren();
+      state.config.categories_definition.forEach((category) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'group flex aspect-square min-w-0 flex-col items-center justify-center gap-2 rounded-md border border-slate-200 bg-white p-2 text-center transition hover:border-brand-600 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600';
+        button.setAttribute('aria-label', `查看${category.name}`);
+        button.dataset.categoryId = category.id;
+
+        const icon = document.createElement('span');
+        icon.className = 'text-2xl';
+        icon.textContent = category.icon || '•';
+        icon.setAttribute('aria-hidden', 'true');
+        const name = document.createElement('span');
+        name.className = 'text-xs font-bold leading-4 text-slate-700 group-hover:text-brand-800';
+        name.textContent = category.name;
+        button.append(icon, name);
+        button.addEventListener('click', () => {
+          console.log('正在處理分類：', category.name);
+          openCategoryModal(category).catch((error) => {
+            console.error(`分類「${category.name}」處理失敗：`, error);
+            showCategoryMessage('分類服務發生錯誤，請開啟 F12 Console 查看詳細訊息。');
+          });
+        });
+        console.log('已掛載分類按鈕監聽器：', category.name);
+        fragment.appendChild(button);
+      });
+      elements.categoryGrid.appendChild(fragment);
+    }
+
+    function escapeHtml(value = '') {
+      return String(value).replace(/[&<>"']/g, (character) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[character]));
+    }
+
+    function beginTransportLayerLoading(layerKey) {
+      const button = state.transportLayerButtons?.[layerKey];
+      if (!button) return 0;
+      const sequence = (state.transportLoadingSequence[layerKey] || 0) + 1;
+      state.transportLoadingSequence[layerKey] = sequence;
+      button.dataset.loading = 'true';
+      button.setAttribute('aria-busy', 'true');
+      return sequence;
+    }
+
+    function finishTransportLayerLoading(layerKey, sequence) {
+      const button = state.transportLayerButtons?.[layerKey];
+      if (!button || state.transportLoadingSequence[layerKey] !== sequence) return;
+      button.dataset.loading = 'false';
+      button.setAttribute('aria-busy', 'false');
+    }
+
+    function setTransportLayerVisibility(layerKey, visible) {
+      const layer = state.transportLayers?.[layerKey];
+      const button = state.transportLayerButtons?.[layerKey];
+      if (!state.map || !layer || !button) return;
+      if (!visible) {
+        state.map.removeLayer(layer);
+        button.dataset.loading = 'false';
+        button.setAttribute('aria-busy', 'false');
+        button.setAttribute('aria-pressed', 'false');
+        button.setAttribute('aria-label', `${button.dataset.label}，目前隱藏，點擊切換`);
+        return;
+      }
+      const loadingSequence = beginTransportLayerLoading(layerKey);
+      state.map.addLayer(layer);
+      button.setAttribute('aria-pressed', 'true');
+      button.setAttribute('aria-label', `${button.dataset.label}，目前顯示，點擊切換`);
+      const center = state.map.getCenter();
+      refreshTransportLayers(center.lat, center.lng, findNearestCityCode(center.lat, center.lng), {
+        layers: [layerKey],
+        force: true,
+        loadingKeys: [layerKey],
+        loadingSequences: { [layerKey]: loadingSequence }
+      }).catch((error) => console.error(`${button.dataset.label}圖層讀取失敗：`, error));
+    }
+
+    function createTransportLayerControl() {
+      const definitions = [
+        {
+          key: 'traffic', label: '即時路況',
+          icon: '<span class="traffic-key" style="background:#16a34a"></span><span class="traffic-key" style="background:#eab308"></span><span class="traffic-key" style="background:#dc2626"></span>'
+        },
+        { key: 'bus', label: '公車動態', icon: '<span aria-hidden="true">🚌</span>' },
+        { key: 'bike', label: 'YouBike 站點', icon: '<span aria-hidden="true">🚲</span>' }
+      ];
+      const control = L.control({ position: 'topleft' });
+      control.onAdd = () => {
+        const container = L.DomUtil.create('div', 'transport-layer-control');
+        container.setAttribute('role', 'group');
+        container.setAttribute('aria-label', '交通資訊圖層');
+        L.DomEvent.disableClickPropagation(container);
+        L.DomEvent.disableScrollPropagation(container);
+        definitions.forEach((definition) => {
+          const button = L.DomUtil.create('button', 'transport-layer-toggle', container);
+          button.type = 'button';
+          button.dataset.label = definition.label;
+          button.dataset.loading = 'true';
+          button.setAttribute('aria-busy', 'true');
+          button.setAttribute('aria-pressed', 'true');
+          button.setAttribute('aria-label', `${definition.label}，目前顯示，點擊切換`);
+          button.innerHTML = `${definition.icon}<span>${definition.label}</span><span class="transport-layer-state" aria-live="polite"></span>`;
+          L.DomEvent.on(button, 'click', (event) => {
+            L.DomEvent.stop(event);
+            const visible = state.map.hasLayer(state.transportLayers[definition.key]);
+            setTransportLayerVisibility(definition.key, !visible);
+          });
+          state.transportLayerButtons[definition.key] = button;
+        });
+        return container;
+      };
+      return control;
+    }
+
+    function createBikeClusterIcon(cluster) {
+      const count = cluster.getChildCount();
+      const zoom = state.map?.getZoom() || 10;
+      const size = Math.round(Math.min(86, 40 + Math.max(0, 16 - zoom) * 3 + Math.log10(count + 1) * 8));
+      const fontSize = Math.round(Math.min(24, 12 + Math.max(0, 15 - zoom) * 0.8 + Math.log10(count + 1) * 2));
+      return L.divIcon({
+        className: 'bike-cluster',
+        html: `<div class="bike-cluster-symbol" style="width:${size}px;height:${size}px;font-size:${fontSize}px">${count}<span>站</span></div>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2]
+      });
+    }
+
+    function syncMapCenterSelection(updateStatus = true) {
+      if (!state.map || !state.config) return null;
+      const center = state.map.getCenter();
+      const cityCode = findNearestCityCode(center.lat, center.lng);
+      state.selectedTransportLocation = [center.lat, center.lng];
+      setSelectedCity(cityCode);
+      if (updateStatus) {
+        elements.locationStatus.textContent = `地圖中心：${state.config.cities[cityCode].cityName} ${center.lat.toFixed(4)}, ${center.lng.toFixed(4)}`;
+      }
+      return { center, cityCode };
+    }
+
+    function handleMapViewportChanged() {
+      syncMapCenterSelection();
+      scheduleTransportLayerRefresh();
+    }
+
+    function scheduleTransportLayerRefresh() {
+      refreshMapLayout([0, 100]);
+      window.clearTimeout(state.transportRefreshTimer);
+      state.transportRefreshTimer = window.setTimeout(() => {
+        if (!state.map || !state.config) return;
+        const selection = syncMapCenterSelection(false);
+        if (!selection) return;
+        const { center, cityCode } = selection;
+
+        state.transportHasInitialized = true;
+        refreshTransportLayers(center.lat, center.lng, cityCode)
+          .catch((error) => console.error('交通圖層更新失敗：', error));
+      }, 800);
+    }
+
+    const PLACE_TYPE_LABELS = {
+      home: '住家', school: '學校', work: '工作地點', busStop: '常用公車站', bikeStation: '常用 U-Bike 站', recent: '最近查詢'
+    };
+
+    function loadPersonalSettings() {
+      try {
+        const saved = JSON.parse(localStorage.getItem('smart-life-saved-places') || '[]');
+        state.savedPlaces = Array.isArray(saved) ? saved : [];
+      } catch (error) {
+        state.savedPlaces = [];
+        console.error('讀取收藏位置失敗：', error);
+      }
+      const interval = Math.max(10, Number(localStorage.getItem('smart-life-refresh-seconds')) || 60);
+      elements.refreshIntervalSelect.value = String([10, 30, 60, 120, 300].includes(interval) ? interval : 60);
+      renderSavedPlaces();
+      schedulePeriodicUpdates();
+    }
+
+    function persistSavedPlaces() {
+      localStorage.setItem('smart-life-saved-places', JSON.stringify(state.savedPlaces));
+      renderSavedPlaces();
+    }
+
+    function addSavedPlace(place) {
+      const key = place.uid ? `${place.type}:${place.uid}` : `${place.type}:${place.lat.toFixed(5)}:${place.lng.toFixed(5)}`;
+      const item = { ...place, key, savedAt: new Date().toISOString() };
+      state.savedPlaces = [item, ...state.savedPlaces.filter((entry) => entry.key !== key)];
+      if (place.type === 'recent') {
+        const recent = state.savedPlaces.filter((entry) => entry.type === 'recent').slice(0, 8);
+        state.savedPlaces = [...state.savedPlaces.filter((entry) => entry.type !== 'recent'), ...recent];
+      }
+      persistSavedPlaces();
+      return item;
+    }
+
+    function renderSavedPlaces() {
+      if (!elements.savedPlaceList) return;
+      elements.savedPlaceList.replaceChildren();
+      if (!state.savedPlaces.length) {
+        elements.savedPlaceList.appendChild(createReportParagraph('尚未標註位置或收藏交通站點。', 'text-xs text-slate-500'));
+        renderSavedPlaceMarkers();
+        return;
+      }
+      state.savedPlaces.forEach((place) => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 p-2';
+        const goButton = document.createElement('button');
+        goButton.type = 'button';
+        goButton.className = 'min-w-0 flex-1';
+        goButton.innerHTML = `<strong class="block truncate text-xs text-slate-800">${escapeHtml(PLACE_TYPE_LABELS[place.type] || '標註')}・${escapeHtml(place.name || '未命名')}</strong><span class="block text-[11px] text-slate-500">${Number(place.lat).toFixed(4)}, ${Number(place.lng).toFixed(4)}</span>`;
+        goButton.addEventListener('click', () => {
+          state.map?.setView([place.lat, place.lng], Math.max(16, state.map.getZoom()), { animate: false });
+          closeMenu();
+        });
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className = 'grid h-8 w-8 shrink-0 place-items-center rounded-md text-lg text-slate-500 hover:bg-red-50 hover:text-red-700';
+        removeButton.setAttribute('aria-label', `刪除${place.name}`);
+        removeButton.textContent = '×';
+        removeButton.addEventListener('click', () => {
+          state.savedPlaces = state.savedPlaces.filter((entry) => entry.key !== place.key);
+          persistSavedPlaces();
+        });
+        row.append(goButton, removeButton);
+        elements.savedPlaceList.appendChild(row);
+      });
+      renderSavedPlaceMarkers();
+    }
+
+    function renderSavedPlaceMarkers() {
+      if (!state.savedPlaceLayer) return;
+      state.savedPlaceLayer.clearLayers();
+      const symbols = { home: '家', school: '校', work: '工', busStop: '站', bikeStation: '騎' };
+      state.savedPlaces.filter((place) => place.type !== 'recent').forEach((place) => {
+        if (!Number.isFinite(Number(place.lat)) || !Number.isFinite(Number(place.lng))) return;
+        const icon = L.divIcon({
+          className: 'saved-place-icon',
+          html: `<span class="saved-place-symbol" aria-hidden="true">${symbols[place.type] || '點'}</span>`,
+          iconSize: [30, 30], iconAnchor: [15, 15]
+        });
+        L.marker([place.lat, place.lng], { icon, zIndexOffset: 700 })
+          .bindTooltip(`${PLACE_TYPE_LABELS[place.type] || '標註'}・${place.name}`, { direction: 'top', offset: [0, -16] })
+          .on('click', () => state.map.setView([place.lat, place.lng], Math.max(16, state.map.getZoom())))
+          .addTo(state.savedPlaceLayer);
+      });
+    }
+
+    function saveCurrentCenter() {
+      if (!state.map) return;
+      const center = state.map.getCenter();
+      const type = elements.placeTypeSelect.value;
+      const label = PLACE_TYPE_LABELS[type] || '標註位置';
+      const name = window.prompt('請輸入位置名稱', label);
+      if (name === null) return;
+      addSavedPlace({ type, name: name.trim() || label, lat: center.lat, lng: center.lng, cityCode: findNearestCityCode(center.lat, center.lng) });
+      elements.personalStatus.textContent = `已儲存「${name.trim() || label}」。`;
+    }
+
+    function saveFavoriteStation(type, station) {
+      const isBus = type === 'busStop';
+      addSavedPlace({
+        type,
+        uid: isBus ? station.stopUid : station.stationUid,
+        stopUids: isBus ? station.stopUids : undefined,
+        name: isBus ? station.stopName : station.stationName,
+        lat: station.lat,
+        lng: station.lng,
+        cityCode: findNearestCityCode(station.lat, station.lng)
+      });
+      elements.personalStatus.textContent = `已加入${PLACE_TYPE_LABELS[type]}。`;
+    }
+
+    function renderRouteDetails(route, container) {
+      const section = document.createElement('section');
+      section.className = 'mt-4';
+      const heading = document.createElement('h3');
+      heading.className = 'text-sm font-bold text-slate-900';
+      heading.textContent = `${route.routeName}・${route.directionLabel}`;
+      section.appendChild(heading);
+      if (route.nextStop) section.appendChild(createReportParagraph(`預估到站：${route.nextStop.arrivalLabel}｜下一站：${route.nextStop.stopName}`, 'mt-1 text-sm font-bold text-amber-800'));
+      const list = document.createElement('div');
+      list.className = 'route-stop-list mt-2';
+      (route.stops || []).forEach((stop) => {
+        const item = document.createElement('div');
+        item.className = `route-stop-item${route.nextStop?.stopUid === stop.stopUid ? ' is-next' : ''}`;
+        item.innerHTML = `<span class="w-6 shrink-0 text-right font-mono">${stop.sequence || ''}</span><span class="min-w-0 flex-1">${escapeHtml(stop.stopName)}${route.nextStop?.stopUid === stop.stopUid ? '<strong class="ml-2">下一站</strong>' : ''}</span><span class="shrink-0 text-xs">${escapeHtml(stop.arrivalLabel || '')}</span>`;
+        list.appendChild(item);
+      });
+      section.appendChild(list);
+      container.appendChild(section);
+    }
+
+    async function showBusDetails(bus) {
+      state.busRouteLayer?.clearLayers();
+      openInfoPanel();
+      elements.infoTitle.textContent = `${bus.routeName} 路線公車`;
+      elements.infoContent.innerHTML = '<div class="flex items-center gap-3 text-sm text-slate-600"><span class="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>正在讀取站序與預估到站...</div>';
+      try {
+        const payload = await fetchOfficialData('/api/tdx/bus-details', {
+          lat: bus.lat, lng: bus.lng, city: findNearestCityCode(bus.lat, bus.lng), routeName: bus.routeName,
+          plateNumber: bus.plateNumber, direction: bus.direction ?? '', currentStopUid: bus.currentStopUid || ''
+        });
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(createReportParagraph(`車牌：${bus.plateNumber || '未提供'}｜${bus.status}｜速度：${Number.isFinite(bus.speed) ? `${bus.speed} km/h` : '未提供'}`, 'text-sm leading-6 text-slate-700'));
+        state.busRouteLayer?.clearLayers();
+        (payload.data?.routes || []).forEach((route) => {
+          renderRouteDetails(route, wrapper);
+          const line = route.stops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lng)).map((stop) => [stop.lat, stop.lng]);
+          if (line.length >= 2) L.polyline(line, { color: '#7c3aed', weight: 5, opacity: 0.8 }).addTo(state.busRouteLayer);
+        });
+        if (!(payload.data?.routes || []).length) wrapper.appendChild(createReportParagraph('TDX 目前沒有提供此公車的站序資料。'));
+        elements.infoContent.replaceChildren(wrapper);
+      } catch (error) {
+        elements.infoContent.replaceChildren(createReportParagraph(`公車詳情讀取失敗：${error.message}`, 'rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800'));
+      }
+    }
+
+    async function showBusStopDetails(stop) {
+      state.selectedBusStop = stop;
+      state.selectedBikeStation = null;
+      openInfoPanel();
+      elements.infoTitle.textContent = stop.stopName;
+      elements.infoContent.innerHTML = '<div class="flex items-center gap-3 text-sm text-slate-600"><span class="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>正在讀取所有公車與路線...</div>';
+      try {
+        const payload = await fetchOfficialData('/api/tdx/bus-stop-details', {
+          lat: stop.lat, lng: stop.lng, city: findNearestCityCode(stop.lat, stop.lng), stopUid: stop.stopUid,
+          stopUids: (stop.stopUids || [stop.stopUid]).join(','), stopName: stop.stopName
+        });
+        const wrapper = document.createElement('div');
+        const actions = document.createElement('div');
+        actions.className = 'flex gap-2';
+        actions.innerHTML = '<button type="button" class="favorite-stop rounded-md bg-brand-700 px-3 py-2 text-xs font-bold text-white">收藏常用站</button><button type="button" class="share-stop rounded-md border border-slate-300 px-3 py-2 text-xs font-bold">分享站牌</button>';
+        actions.querySelector('.favorite-stop').addEventListener('click', () => saveFavoriteStation('busStop', stop));
+        actions.querySelector('.share-stop').addEventListener('click', shareCurrentMap);
+        wrapper.appendChild(actions);
+        const arrivals = document.createElement('div');
+        arrivals.className = 'mt-4 grid gap-2';
+        (payload.data?.arrivals || []).slice(0, 20).forEach((arrival) => {
+          const row = document.createElement('div');
+          row.className = 'flex items-center justify-between gap-3 rounded-md border border-slate-200 p-3 text-sm';
+          row.innerHTML = `<strong>${escapeHtml(arrival.routeName)} ${arrival.direction === 0 ? '去程' : arrival.direction === 1 ? '返程' : ''}</strong><span class="font-bold text-brand-800">${escapeHtml(arrival.arrivalLabel)}</span>`;
+          arrivals.appendChild(row);
+        });
+        wrapper.appendChild(arrivals);
+        (payload.data?.routes || []).forEach((route) => renderRouteDetails(route, wrapper));
+        if (!(payload.data?.arrivals || []).length) wrapper.appendChild(createReportParagraph('目前沒有公車到站預估。'));
+        elements.infoContent.replaceChildren(wrapper);
+      } catch (error) {
+        elements.infoContent.replaceChildren(createReportParagraph(`站牌資料讀取失敗：${error.message}`, 'rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800'));
+      }
+    }
+
+    function showBikeDetails(station) {
+      state.selectedBikeStation = station;
+      state.selectedBusStop = null;
+      openInfoPanel();
+      elements.infoTitle.textContent = station.stationName;
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = `<div class="grid grid-cols-2 gap-3"><div class="rounded-md bg-sky-50 p-4"><span class="block text-xs text-slate-500">可借車輛</span><strong class="text-2xl text-sky-800">${Number.isFinite(station.availableRentBikes) ? station.availableRentBikes : '-'}</strong></div><div class="rounded-md bg-emerald-50 p-4"><span class="block text-xs text-slate-500">可還空位</span><strong class="text-2xl text-emerald-800">${Number.isFinite(station.availableReturnBikes) ? station.availableReturnBikes : '-'}</strong></div></div><div class="mt-4 flex gap-2"><button type="button" class="favorite-bike rounded-md bg-brand-700 px-3 py-2 text-xs font-bold text-white">收藏常用站</button><button type="button" class="share-bike rounded-md border border-slate-300 px-3 py-2 text-xs font-bold">分享站點</button></div>`;
+      wrapper.querySelector('.favorite-bike').addEventListener('click', () => saveFavoriteStation('bikeStation', station));
+      wrapper.querySelector('.share-bike').addEventListener('click', shareCurrentMap);
+      elements.infoContent.replaceChildren(wrapper);
+    }
+
+    async function shareCurrentMap() {
+      if (!state.map) return;
+      const center = state.map.getCenter();
+      const url = new URL(window.location.href);
+      url.search = '';
+      url.searchParams.set('lat', center.lat.toFixed(6));
+      url.searchParams.set('lng', center.lng.toFixed(6));
+      url.searchParams.set('zoom', state.map.getZoom());
+      if (state.selectedBusStop) {
+        url.searchParams.set('busStop', state.selectedBusStop.stopUid);
+        url.searchParams.set('busStopUids', (state.selectedBusStop.stopUids || [state.selectedBusStop.stopUid]).join(','));
+        url.searchParams.set('busStopName', state.selectedBusStop.stopName);
+        url.searchParams.set('selectedLat', state.selectedBusStop.lat);
+        url.searchParams.set('selectedLng', state.selectedBusStop.lng);
+      } else if (state.selectedBikeStation) {
+        url.searchParams.set('bikeStation', state.selectedBikeStation.stationUid);
+        url.searchParams.set('bikeStationName', state.selectedBikeStation.stationName);
+        url.searchParams.set('selectedLat', state.selectedBikeStation.lat);
+        url.searchParams.set('selectedLng', state.selectedBikeStation.lng);
+      }
+      const shareData = { title: document.title, text: '台灣智慧生活交通位置', url: url.toString() };
+      try {
+        if (navigator.share) await navigator.share(shareData);
+        else {
+          await navigator.clipboard.writeText(url.toString());
+          elements.locationStatus.textContent = '分享網址已複製';
+        }
+      } catch (error) {
+        if (error.name !== 'AbortError') console.error('分享失敗：', error);
+      }
+    }
+
+    function applySharedMapState() {
+      if (!state.map) return;
+      const params = new URLSearchParams(window.location.search);
+      const lat = Number(params.get('lat'));
+      const lng = Number(params.get('lng'));
+      const zoom = Math.min(19, Math.max(7, Number(params.get('zoom')) || FALLBACK_ZOOM));
+      if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= 21.5 && lat <= 26 && lng >= 119 && lng <= 122.5) {
+        state.map.setView([lat, lng], zoom, { animate: false });
+      }
+      const selectedLat = Number(params.get('selectedLat'));
+      const selectedLng = Number(params.get('selectedLng'));
+      if (params.get('busStop') && Number.isFinite(selectedLat) && Number.isFinite(selectedLng)) {
+        showBusStopDetails({ stopUid: params.get('busStop'), stopUids: (params.get('busStopUids') || params.get('busStop')).split(','), stopName: params.get('busStopName') || '分享的公車站', lat: selectedLat, lng: selectedLng });
+      } else if (params.get('bikeStation') && Number.isFinite(selectedLat) && Number.isFinite(selectedLng)) {
+        state.map.setView([selectedLat, selectedLng], Math.max(17, zoom), { animate: false });
+        showBikeDetails({ stationUid: params.get('bikeStation'), stationName: params.get('bikeStationName') || '分享的 U-Bike 站', lat: selectedLat, lng: selectedLng });
+      }
+    }
+
+    function showBrowserNotification(title, body, tag) {
+      if (!('Notification' in window) || Notification.permission !== 'granted') return;
+      new Notification(title, { body, tag, renotify: false });
+    }
+
+    async function requestNotificationPermission() {
+      if (!('Notification' in window)) {
+        elements.personalStatus.textContent = '此瀏覽器不支援通知。';
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      elements.notificationButton.textContent = permission === 'granted' ? '通知已開啟' : '開啟通知';
+      elements.personalStatus.textContent = permission === 'granted' ? '頁面停留期間會檢查收藏站點。' : '瀏覽器未允許通知。';
+      if (permission === 'granted') refreshFavoriteNotifications();
+    }
+
+    async function refreshFavoriteNotifications() {
+      if (document.hidden || !state.config || !('Notification' in window) || Notification.permission !== 'granted') return;
+      const busStops = state.savedPlaces.filter((place) => place.type === 'busStop' && place.uid);
+      const bikeStations = state.savedPlaces.filter((place) => place.type === 'bikeStation' && place.uid);
+      await Promise.allSettled(busStops.map(async (stop) => {
+        const payload = await fetchOfficialData('/api/tdx/bus-stop-details', {
+          lat: stop.lat, lng: stop.lng, city: stop.cityCode, stopUid: stop.uid,
+          stopUids: (stop.stopUids || [stop.uid]).join(','), stopName: stop.name
+        });
+        const arriving = (payload.data?.arrivals || []).filter((arrival) => Number.isFinite(arrival.estimateSeconds) && arrival.estimateSeconds <= 300);
+        const snapshot = arriving.map((arrival) => `${arrival.routeName}:${arrival.plateNumber}`).join('|');
+        if (arriving.length && state.notificationSnapshots[stop.key] !== snapshot) {
+          const first = arriving[0];
+          showBrowserNotification(`${stop.name}有公車即將抵達`, `${first.routeName} ${first.arrivalLabel}${arriving.length > 1 ? `，另有 ${arriving.length - 1} 班` : ''}`, `bus-${stop.uid}`);
+        }
+        state.notificationSnapshots[stop.key] = snapshot;
+      }));
+
+      const bikeGroups = Object.groupBy
+        ? Object.groupBy(bikeStations, (station) => station.cityCode)
+        : bikeStations.reduce((groups, station) => ({ ...groups, [station.cityCode]: [...(groups[station.cityCode] || []), station] }), {});
+      await Promise.allSettled(Object.entries(bikeGroups).map(async ([cityCode, favorites]) => {
+        const origin = favorites[0];
+        const payload = await fetchOfficialData('/api/tdx/bike', { lat: origin.lat, lng: origin.lng, city: cityCode });
+        favorites.forEach((favorite) => {
+          const current = (payload.data || []).find((station) => station.stationUid === favorite.uid);
+          if (!current) return;
+          const previous = state.notificationSnapshots[favorite.key] || {};
+          if (Number(current.availableRentBikes) > 0 && Number(previous.rent || 0) <= 0) {
+            showBrowserNotification(`${favorite.name}有車可借`, `目前可借 ${current.availableRentBikes} 輛`, `bike-rent-${favorite.uid}`);
+          }
+          if (Number(current.availableReturnBikes) > 0 && Number(previous.return || 0) <= 0) {
+            showBrowserNotification(`${favorite.name}有空位可還`, `目前可還 ${current.availableReturnBikes} 格`, `bike-return-${favorite.uid}`);
+          }
+          state.notificationSnapshots[favorite.key] = { rent: current.availableRentBikes, return: current.availableReturnBikes };
+        });
+      }));
+
+      if (Date.now() - state.lastSafetyNotificationCheck >= 10 * 60 * 1000 && state.map) {
+        state.lastSafetyNotificationCheck = Date.now();
+        const selection = syncMapCenterSelection(false);
+        if (!selection) return;
+        const { center, cityCode } = selection;
+
+        const cityName = state.config.cities[cityCode]?.cityName || '';
+        try {
+          const safety = await fetchOfficialData('/api/safety', { city: cityName, lat: center.lat, lng: center.lng });
+          (safety.data?.warnings || []).forEach((warning) => {
+            const key = `warning:${warning.title}:${warning.issuedAt}`;
+            if (!state.notificationSnapshots[key]) {
+              showBrowserNotification(warning.title, warning.description || `${cityName}氣象警特報`, key);
+              state.notificationSnapshots[key] = true;
+            }
+          });
+          const earthquake = safety.data?.earthquakes?.[0];
+          if (earthquake) {
+            const key = `earthquake:${earthquake.originTime}:${earthquake.magnitude}`;
+            if (!state.notificationSnapshots[key]) {
+              showBrowserNotification(`地震資訊：規模 ${earthquake.magnitude ?? '未提供'}`, earthquake.report, key);
+              state.notificationSnapshots[key] = true;
+            }
+          }
+        } catch (error) {
+          console.error('天氣與災害通知讀取失敗：', error);
+        }
+      }
+    }
+
+    function schedulePeriodicUpdates() {
+      window.clearTimeout(state.notificationTimer);
+      const seconds = Math.max(10, Number(elements.refreshIntervalSelect?.value) || 60);
+      localStorage.setItem('smart-life-refresh-seconds', String(seconds));
+      state.notificationTimer = window.setTimeout(async () => {
+        if (!document.hidden && state.map && state.config) {
+          const selection = syncMapCenterSelection(false);
+          if (selection) {
+            const { center, cityCode } = selection;
+            const updates = [refreshTransportLayers(center.lat, center.lng, cityCode, { layers: ['bus'] })];
+            if (Date.now() - state.lastFavoriteRefreshAt >= 5 * 60 * 1000) {
+              state.lastFavoriteRefreshAt = Date.now();
+              updates.push(refreshFavoriteNotifications());
+            }
+            await Promise.allSettled(updates);
+          }
+        }
+        schedulePeriodicUpdates();
+      }, seconds * 1000);
+      if (elements.personalStatus) elements.personalStatus.textContent = `頁面開啟時每 ${seconds} 秒更新交通與收藏站點。`;
+    }
+
+    function renderBusLayer(payload) {
+      const layer = state.busVehicleLayer;
+      if (!layer) return;
+      layer.clearLayers();
+      (payload.data || []).forEach((bus) => {
+        if (!Number.isFinite(bus.lat) || !Number.isFinite(bus.lng)) return;
+        const icon = L.divIcon({
+          className: 'transport-bus-icon',
+          html: `<span class="transport-bus-symbol" style="transform:rotate(${Number(bus.azimuth) || 0}deg)" aria-hidden="true">🚌</span>`,
+          iconSize: [34, 34], iconAnchor: [17, 17], popupAnchor: [0, -18]
+        });
+        const popup = `<div class="transport-popup"><strong>${escapeHtml(bus.routeName)} 路線公車</strong>
+          <p>車牌：${escapeHtml(bus.plateNumber || '未提供')}</p>
+          <p>行駛狀況：${escapeHtml(bus.status)}</p>
+          <p>速度：${Number.isFinite(bus.speed) ? `${bus.speed} km/h` : '未提供'}</p>
+          <p>GPS 時間：${escapeHtml(formatOfficialTime(bus.updateTime))}</p></div>`;
+        L.marker([bus.lat, bus.lng], { icon, bubblingMouseEvents: false, zIndexOffset: 500 })
+          .bindPopup(popup)
+          .on('click', () => showBusDetails(bus))
+          .addTo(layer);
+      });
+    }
+
+    function renderBusStops(payload) {
+      const layer = state.busStopLayer;
+      if (!layer) return;
+      layer.clearLayers();
+      (payload.data || []).forEach((stop) => {
+        if (!Number.isFinite(stop.lat) || !Number.isFinite(stop.lng)) return;
+        const icon = L.divIcon({
+          className: 'bus-stop-icon', html: '<span class="bus-stop-symbol" aria-hidden="true">站</span>',
+          iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -16]
+        });
+        L.marker([stop.lat, stop.lng], { icon, bubblingMouseEvents: false, zIndexOffset: 470 })
+          .bindTooltip(stop.stopName, { direction: 'top', offset: [0, -14] })
+          .on('click', () => showBusStopDetails(stop))
+          .addTo(layer);
+      });
+    }
+
+    function renderBikeLayer(payload, cityCode) {
+      const layer = state.transportLayers?.bike;
+      if (!layer) return;
+      layer.clearLayers();
+      const markers = [];
+      (payload.data || []).forEach((station) => {
+        if (!Number.isFinite(station.lat) || !Number.isFinite(station.lng)) return;
+        const icon = L.divIcon({
+          className: 'transport-bike-icon',
+          html: '<span class="transport-bike-symbol" aria-hidden="true">🚲</span>',
+          iconSize: [34, 34], iconAnchor: [17, 17], popupAnchor: [0, -18]
+        });
+        const serviceStatus = station.serviceStatus === 1 ? '正常營運' : station.serviceStatus === 0 ? '停止營運' : '狀態未提供';
+        const popup = `<div class="transport-popup"><strong>${escapeHtml(station.stationName)}</strong>
+          <p>可借車輛：${Number.isFinite(station.availableRentBikes) ? `${station.availableRentBikes} 輛` : '未提供即時資料'}</p>
+          <p>可還空位：${Number.isFinite(station.availableReturnBikes) ? `${station.availableReturnBikes} 格` : '未提供即時資料'}</p>
+          <p>站點狀況：${serviceStatus}</p>
+          <p>更新時間：${escapeHtml(formatOfficialTime(station.updateTime))}</p></div>`;
+        markers.push(L.marker([station.lat, station.lng], { icon, bubblingMouseEvents: false, zIndexOffset: 450 })
+          .bindPopup(popup)
+          .on('click', () => showBikeDetails(station)));
+      });
+      layer.addLayers(markers);
+      state.loadedBikeCityCode = cityCode;
+    }
+
+    function renderTrafficLayer(roadPayload, trafficPayload) {
+      const layer = state.transportLayers?.traffic;
+      if (!layer) return;
+      layer.clearLayers();
+      (roadPayload.data?.roads || []).forEach((road) => {
+        const popup = `<div class="transport-popup"><strong>${escapeHtml(road.roadName)}</strong>
+          <p>未取得即時交通資料，依預設交通順暢顯示</p>
+          <p>道路分類：${escapeHtml(road.highway || '未提供')}</p></div>`;
+        L.polyline(road.line, {
+          color: '#16a34a', weight: 5, opacity: 0.72,
+          renderer: state.trafficRenderer, bubblingMouseEvents: false
+        }).bindPopup(popup).addTo(layer);
+      });
+      const colors = { smooth: '#16a34a', slow: '#eab308', congested: '#dc2626', closed: '#991b1b', unknown: '#16a34a' };
+      state.lastTrafficRoads = trafficPayload.data?.roads || [];
+      (trafficPayload.data?.roads || []).forEach((road) => {
+        const color = colors[road.status] || colors.unknown;
+        const statusLabel = road.status === 'unknown'
+          ? '交通順暢（未取得即時資料，預設顯示）'
+          : road.statusLabel;
+        const popup = `<div class="transport-popup"><strong>${escapeHtml(road.roadName)}</strong>
+          <p>${escapeHtml(road.sectionName || '')}</p>
+          <p>目前狀況：${escapeHtml(statusLabel)}</p>
+          <p>平均速度：${Number.isFinite(road.speed) ? `${road.speed} km/h` : '未提供即時速度'}</p>
+          <p>更新時間：${escapeHtml(formatOfficialTime(road.updateTime))}</p></div>`;
+        (road.lines || []).forEach((line) => {
+          if (!Array.isArray(line) || line.length < 2) return;
+          L.polyline(line, {
+            color, weight: 7, opacity: road.status === 'unknown' ? 0.72 : 0.86,
+            renderer: state.trafficRenderer, bubblingMouseEvents: false
+          }).bindPopup(popup).addTo(layer);
+        });
+      });
+    }
+
+    async function refreshTransportLayers(lat, lng, cityCode, options = {}) {
+      if (!state.transportLayers || !cityCode || !state.map) return;
+      const requestedLayers = new Set(options.layers || ['traffic', 'bus', 'bike']);
+      const force = options.force === true;
+      const isActive = (layerKey) => requestedLayers.has(layerKey)
+        && (force || state.map.hasLayer(state.transportLayers[layerKey]));
+      const now = Date.now();
+      const distanceFrom = (record) => record
+        ? state.map.distance([lat, lng], [record.lat, record.lng])
+        : Infinity;
+      const cityChanged = state.loadedTransportCityCode !== cityCode;
+      const roadRecord = state.lastTransportFetch.roads;
+      const trafficRecord = state.lastTransportFetch.traffic;
+      const bikeRecord = state.lastTransportFetch.bike;
+      const shouldLoadBus = isActive('bus');
+      const shouldLoadBusStops = shouldLoadBus && state.loadedBusStopCityCode !== cityCode;
+      const shouldLoadRoads = isActive('traffic') && (force || cityChanged || !state.lastRoadPayload
+        || distanceFrom(roadRecord) >= 1500 || roadRecord?.zoom !== state.map.getZoom()
+        || now - (roadRecord?.at || 0) >= 10 * 60 * 1000);
+      const shouldLoadTraffic = isActive('traffic') && (force || cityChanged || !state.lastTrafficPayload
+        || distanceFrom(trafficRecord) >= 3000 || now - (trafficRecord?.at || 0) >= 5 * 60 * 1000);
+      const bikeDatasetKey = `CITY:${cityCode}`;
+      const shouldLoadBike = isActive('bike') && (force || cityChanged || state.loadedBikeCityCode !== bikeDatasetKey
+        || distanceFrom(bikeRecord) >= 8000 || now - (bikeRecord?.at || 0) >= 15 * 60 * 1000);
+      const actualLoadingKeys = new Set(options.loadingKeys || []);
+      if (shouldLoadBus) actualLoadingKeys.add('bus');
+      if (shouldLoadRoads || shouldLoadTraffic) actualLoadingKeys.add('traffic');
+      if (shouldLoadBike) actualLoadingKeys.add('bike');
+      const loadingSequences = { ...(options.loadingSequences || {}) };
+      actualLoadingKeys.forEach((layerKey) => {
+        if (!loadingSequences[layerKey]) loadingSequences[layerKey] = beginTransportLayerLoading(layerKey);
+      });
+      const finishLoading = (layerKey) => {
+        if (actualLoadingKeys.has(layerKey)) finishTransportLayerLoading(layerKey, loadingSequences[layerKey]);
+      };
+
+      if (!shouldLoadBus && !shouldLoadRoads && !shouldLoadTraffic && !shouldLoadBike) {
+        actualLoadingKeys.forEach((layerKey) => window.setTimeout(() => finishLoading(layerKey), 180));
+        return;
+      }
+
+      state.transportAbortController?.abort();
+      if (cityChanged) {
+        state.busVehicleLayer?.clearLayers();
+        state.busStopLayer?.clearLayers();
+        if (state.busVehicleLayer && !state.transportLayers.bus.hasLayer(state.busVehicleLayer)) state.transportLayers.bus.addLayer(state.busVehicleLayer);
+        if (state.busStopLayer && !state.transportLayers.bus.hasLayer(state.busStopLayer)) state.transportLayers.bus.addLayer(state.busStopLayer);
+        state.transportLayers.traffic.clearLayers();
+        state.busRouteLayer?.clearLayers();
+        state.loadedTransportCityCode = cityCode;
+        state.loadedBusStopCityCode = null;
+        state.lastRoadPayload = null;
+        state.lastTrafficPayload = null;
+      }
+      state.transportAbortController = new AbortController();
+      const signal = state.transportAbortController.signal;
+      const viewportRadius = Math.ceil(state.map.distance(state.map.getCenter(), state.map.getBounds().getNorthEast()));
+      const bounds = state.map.getBounds();
+      const roadParameters = {
+        south: Math.max(TAIWAN_BOUNDS[0][0], bounds.getSouth()),
+        west: Math.max(TAIWAN_BOUNDS[0][1], bounds.getWest()),
+        north: Math.min(TAIWAN_BOUNDS[1][0], bounds.getNorth()),
+        east: Math.min(TAIWAN_BOUNDS[1][1], bounds.getEast()),
+        zoom: state.map.getZoom()
+      };
+      const busParameters = { lat, lng, city: findNearestCityCode(lat, lng) };
+      const tasks = [];
+      let busRequest = null;
+      let roadsRequest = null;
+      let trafficRequest = null;
+      let bikeRequest = null;
+
+      if (shouldLoadBus) {
+        busRequest = fetchOfficialData('/api/tdx/bus', busParameters, signal);
+        tasks.push({ key: 'bus', promise: busRequest });
+        busRequest.then((payload) => {
+          if (!signal.aborted) renderBusLayer(payload);
+        }).catch((error) => {
+          if (error.name !== 'AbortError') console.error('TDX 公車動態圖層讀取失敗：', error);
+        });
+        let busLayerCompletion = busRequest;
+        if (shouldLoadBusStops) {
+          const busStopsRequest = busRequest.then(() => fetchOfficialData('/api/tdx/bus-stops', busParameters, signal));
+          busLayerCompletion = Promise.allSettled([busRequest, busStopsRequest]);
+          busStopsRequest.then((payload) => {
+            if (signal.aborted) return;
+            renderBusStops(payload);
+            if (!payload.degraded) state.loadedBusStopCityCode = cityCode;
+          }).catch((error) => {
+            if (error.name !== 'AbortError') console.error('TDX 公車站牌背景讀取失敗：', error);
+          });
+        }
+        busLayerCompletion.finally(() => finishLoading('bus'));
+      }
+
+      if (shouldLoadRoads) {
+        roadsRequest = fetchOfficialData('/api/map/roads', roadParameters, signal);
+        tasks.push({ key: 'roads', promise: roadsRequest });
+        roadsRequest.then((payload) => {
+          if (signal.aborted) return;
+          state.lastRoadPayload = payload;
+          state.lastTransportFetch.roads = { lat, lng, at: Date.now(), zoom: state.map.getZoom() };
+        }).catch((error) => {
+          if (error.name !== 'AbortError') console.error('OpenStreetMap 道路圖層讀取失敗：', error);
+        });
+      }
+
+      if (shouldLoadTraffic) {
+        trafficRequest = fetchOfficialData('/api/tdx/traffic', {
+          lat, lng, city: cityCode, radius: Math.min(30000, Math.max(1000, viewportRadius))
+        }, signal);
+        tasks.push({ key: 'traffic', promise: trafficRequest });
+        trafficRequest.then((payload) => {
+          if (signal.aborted) return;
+          state.lastTrafficPayload = payload;
+          state.lastTransportFetch.traffic = { lat, lng, at: Date.now() };
+        }).catch((error) => {
+          if (error.name !== 'AbortError') console.error('TDX 即時路況讀取失敗：', error);
+        });
+      }
+
+      if (shouldLoadRoads || shouldLoadTraffic) {
+        Promise.allSettled([
+          roadsRequest || Promise.resolve(state.lastRoadPayload || { data: { roads: [] } }),
+          trafficRequest || Promise.resolve(state.lastTrafficPayload || { data: { roads: [] } })
+        ]).then(([roadsResult, trafficResult]) => {
+          if (signal.aborted) return;
+          renderTrafficLayer(
+            roadsResult.status === 'fulfilled' ? roadsResult.value : (state.lastRoadPayload || { data: { roads: [] } }),
+            trafficResult.status === 'fulfilled' ? trafficResult.value : (state.lastTrafficPayload || { data: { roads: [] } })
+          );
+        }).finally(() => finishLoading('traffic'));
+      }
+
+      if (shouldLoadBike) {
+        bikeRequest = fetchOfficialData('/api/tdx/bike', { lat, lng, city: cityCode }, signal);
+        tasks.push({ key: 'bike', promise: bikeRequest });
+        bikeRequest.then((payload) => {
+          if (signal.aborted) return;
+          renderBikeLayer(payload, bikeDatasetKey);
+          state.lastTransportFetch.bike = { lat, lng, at: Date.now() };
+        }).catch((error) => {
+          if (error.name !== 'AbortError') console.error('TDX YouBike 圖層讀取失敗：', error);
+        }).finally(() => finishLoading('bike'));
+      }
+
+      const results = await Promise.allSettled(tasks.map((task) => task.promise));
+      if (signal.aborted) return;
+      const bikeIndex = tasks.findIndex((task) => task.key === 'bike');
+      const bikeResult = bikeIndex >= 0 ? results[bikeIndex] : null;
+      const bikeIncomplete = bikeResult?.status === 'fulfilled'
+        && Array.isArray(bikeResult.value.retryableCities)
+        && bikeResult.value.retryableCities.length > 0;
+      const shouldRetry = bikeIncomplete || results.some((result) => result.status === 'rejected'
+        && result.reason?.status !== 429 && result.reason?.name !== 'AbortError');
+      if (shouldRetry && state.transportRetryCount < 1) {
+        state.transportRetryCount += 1;
+        window.clearTimeout(state.transportRefreshTimer);
+        state.transportRefreshTimer = window.setTimeout(scheduleTransportLayerRefresh, 15_000);
+      } else if (!shouldRetry) {
+        state.transportRetryCount = 0;
+      }
+    }
+    // 點擊地圖後先辨識行政區，再將地方報導依主題資料夾完整展開。
+    async function handleMapClick(event) {
+      const { lat, lng } = event.latlng;
+
+      addSavedPlace({ type: 'recent', name: `${lat.toFixed(4)}, ${lng.toFixed(4)}`, lat, lng, cityCode: findNearestCityCode(lat, lng) });
+      const clickSequence = ++state.mapClickSequence;
+      const selectedIcon = L.divIcon({ className: '', html: '<div class="selected-pin"></div>', iconSize: [24, 24], iconAnchor: [12, 24] });
+      if (state.selectedMarker) state.selectedMarker.setLatLng(event.latlng);
+      else state.selectedMarker = L.marker(event.latlng, { icon: selectedIcon, zIndexOffset: 1000 }).addTo(state.map);
+
+      elements.mapHint.classList.add('hidden');
+      openInfoPanel();
+      showSearchLoading(lat, lng);
+      window.clearTimeout(state.searchTimer);
+      state.searchTimer = window.setTimeout(async () => {
+        try {
+          const region = await resolveLocalRegion(lat, lng);
+          if (clickSequence !== state.mapClickSequence) return;
+          await renderNearbyInformation(lat, lng, region);
+        } catch (error) {
+          if (error.name === 'AbortError') return;
+          console.error('點選位置的官方資料查詢失敗：', error);
+          elements.infoTitle.textContent = '官方資料查詢失敗';
+          elements.infoContent.replaceChildren(
+            createReportParagraph(error.message, 'rounded-md border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-800')
+          );
+        }
+      }, 350);
+    }
+
+    function showSearchLoading(lat, lng) {
+      elements.infoTitle.textContent = '辨識當地區域中';
+      elements.infoContent.replaceChildren();
+      const coordinate = document.createElement('p');
+      coordinate.className = 'font-mono text-xs font-bold text-slate-500';
+      coordinate.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      const loading = document.createElement('div');
+      loading.className = 'mt-4 flex items-center gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600';
+      loading.innerHTML = '<span class="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>正在辨識鄉鎮市區並整理主題報導...';
+      elements.infoContent.append(coordinate, loading);
+    }
+
+    function normalizePlaceName(value = '') {
+      return value.trim().replaceAll('台', '臺');
+    }
+
+    function findCityCodeByName(cityName) {
+      const normalizedName = normalizePlaceName(cityName);
+      return Object.entries(state.config?.cities || {}).find(([, city]) => {
+        const configuredName = normalizePlaceName(city.cityName);
+        return normalizedName.includes(configuredName) || configuredName.includes(normalizedName);
+      })?.[0] || null;
+    }
+
+    function findNearestCityCode(latitude, longitude) {
+      let nearestCode = state.selectedCityCode;
+      let shortestDistance = Infinity;
+      Object.entries(state.config?.cities || {}).forEach(([code, city]) => {
+        if (!Array.isArray(city.mapCenter) || city.mapCenter.length !== 2) return;
+        const distance = haversineDistance(latitude, longitude, city.mapCenter[0], city.mapCenter[1]);
+        if (distance < shortestDistance) {
+          shortestDistance = distance;
+          nearestCode = code;
+        }
+      });
+      return nearestCode;
+    }
+
+    async function resolveLocalRegion(latitude, longitude) {
+      state.geocodeAbortController?.abort();
+      state.geocodeAbortController = new AbortController();
+      const endpoint = new URL('/api/geocode/reverse', API_BASE_URL);
+      endpoint.search = new URLSearchParams({ lat: latitude, lng: longitude });
+      const response = await fetch(endpoint, {
+        headers: { Accept: 'application/json' },
+        signal: state.geocodeAbortController.signal
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || `HTTP ${response.status}`);
+      const cityName = result.data.city;
+      const cityCode = findCityCodeByName(cityName) || findNearestCityCode(latitude, longitude);
+      if (!cityCode || !state.config.cities[cityCode]) throw new Error(`無法將縣市名稱對應至設定檔：${cityName}`);
+      const officialDistricts = districtsByCity[cityCode] || [];
+      const normalizedDistrict = normalizePlaceName(result.data.district);
+      const district = officialDistricts.find((name) => normalizePlaceName(name) === normalizedDistrict)
+        || officialDistricts.find((name) => normalizePlaceName(result.data.displayName || '').includes(normalizePlaceName(name)))
+        || (/([區鄉鎮市])$/.test(normalizedDistrict) ? normalizedDistrict : null)
+        || state.selectedDistrictByCity[cityCode]
+        || officialDistricts[0];
+      state.selectedDistrictByCity[cityCode] = district;
+      return {
+        cityCode,
+        cityName: state.config.cities[cityCode].cityName,
+        district,
+        displayName: result.data.displayName,
+        source: result.source,
+        observedAt: result.observedAt
+      };
+    }
+
+    function createReportParagraph(text, className = 'mt-3 text-sm leading-7 text-slate-700') {
+      const paragraph = document.createElement('p');
+      paragraph.className = className;
+      paragraph.textContent = text;
+      return paragraph;
+    }
+
+    function formatOfficialTime(value) {
+      if (!value) return '官方資料未提供更新時間';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return new Intl.DateTimeFormat('zh-TW', {
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+      }).format(date);
+    }
+
+    function showRequestMessage(message) {
+      if (!elements.requestMessage) return;
+      window.clearTimeout(state.requestMessageTimer);
+      elements.requestMessage.textContent = message;
+      elements.requestMessage.classList.remove('hidden');
+      state.requestMessageTimer = window.setTimeout(() => {
+        elements.requestMessage.classList.add('hidden');
+      }, 5000);
+    }
+
+    async function fetchOfficialData(pathname, parameters, signal) {
+      const endpoint = new URL(pathname, API_BASE_URL);
+      Object.entries(parameters).forEach(([key, value]) => endpoint.searchParams.set(key, value));
+      let response;
+      try {
+        response = await fetch(endpoint, { headers: { Accept: 'application/json' }, signal });
+      } catch (error) {
+        if (error.name === 'AbortError') throw error;
+        const connectionError = new Error('無法連線本機資料服務，請確認服務已啟動後再試');
+        showRequestMessage(connectionError.message);
+        throw connectionError;
+      }
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) {
+        const message = response.status === 429 ? '請求過於頻繁，請稍後再試' : (payload.message || `HTTP ${response.status}`);
+        if (response.status === 429) showRequestMessage(message);
+        const error = new Error(message);
+        error.status = response.status;
+        throw error;
+      }
+      if (payload.degraded && Date.now() - state.lastDegradedNoticeAt >= 10 * 60 * 1000) {
+        state.lastDegradedNoticeAt = Date.now();
+        showRequestMessage(payload.message || '部分即時資料暫時使用快取顯示');
+      }
+      return payload;
+    }
+
+    function unavailableArticle(folderName, error) {
+      return [{
+        title: `【${folderName}】官方資料目前無法取得`,
+        paragraphs: [error?.message || '官方服務沒有回傳可用資料。系統不會以非官方數值填補。']
+      }];
+    }
+
+    function weatherVisualFor(phenomenon = '') {
+      if (/雷|豪雨|暴雨/.test(phenomenon)) {
+        return 'https://images.unsplash.com/photo-1605727216801-e27ce1d0cc28?auto=format&fit=crop&w=1200&q=82';
+      }
+      if (/雨|陣雨/.test(phenomenon)) {
+        return 'https://images.unsplash.com/photo-1519692933481-e162a57d6721?auto=format&fit=crop&w=1200&q=82';
+      }
+      if (/陰|雲/.test(phenomenon)) {
+        return 'https://images.unsplash.com/photo-1534088568595-a066f410bcda?auto=format&fit=crop&w=1200&q=82';
+      }
+      return 'https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?auto=format&fit=crop&w=1200&q=82';
+    }
+
+    function renderOfficialFolder(folderData) {
+      const folder = document.createElement('details');
+      folder.className = 'topic-folder overflow-hidden rounded-md border border-slate-200 bg-white';
+      folder.open = true;
+
+      const summary = document.createElement('summary');
+      summary.className = 'flex cursor-pointer select-none items-center gap-3 bg-slate-50 px-4 py-3 outline-none hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600';
+      const tab = document.createElement('span');
+      tab.className = 'h-7 w-2 shrink-0 rounded-sm bg-brand-700';
+      tab.setAttribute('aria-hidden', 'true');
+      const heading = document.createElement('span');
+      heading.className = 'min-w-0 flex-1';
+      const title = document.createElement('span');
+      title.className = 'block text-sm font-bold text-slate-900';
+      title.textContent = folderData.name;
+      const source = document.createElement('span');
+      source.className = 'mt-0.5 block truncate text-xs text-slate-500';
+      source.textContent = folderData.source;
+      heading.append(title, source);
+      const chevron = document.createElement('span');
+      chevron.className = 'folder-chevron shrink-0 text-lg text-slate-500 transition-transform';
+      chevron.textContent = '⌃';
+      chevron.setAttribute('aria-hidden', 'true');
+      summary.append(tab, heading, chevron);
+
+      const content = document.createElement('div');
+      content.className = 'folder-content divide-y divide-slate-200 border-t border-transparent px-4';
+      folderData.articles.forEach((report) => {
+        const article = document.createElement('article');
+        article.className = 'py-5';
+        const eyebrow = createReportParagraph(
+          `${folderData.source}｜${formatOfficialTime(folderData.observedAt)}`,
+          'text-xs font-bold leading-5 text-brand-700'
+        );
+        const articleTitle = document.createElement('h4');
+        articleTitle.className = 'mt-2 text-base font-bold leading-6 text-slate-950';
+        articleTitle.textContent = report.title;
+        if (folderData.imageUrl) {
+          const visual = document.createElement('figure');
+          visual.className = 'relative mb-4 aspect-[16/7] overflow-hidden rounded-md bg-slate-200';
+          const image = document.createElement('img');
+          image.className = 'h-full w-full object-cover transition-transform duration-700 hover:scale-105';
+          image.src = folderData.imageUrl;
+          image.alt = folderData.imageAlt || '';
+          image.loading = 'lazy';
+          image.decoding = 'async';
+          const shade = document.createElement('div');
+          shade.className = 'absolute inset-0 bg-slate-950/35';
+          const weatherNow = document.createElement('figcaption');
+          weatherNow.className = 'absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-4 text-white';
+          const condition = document.createElement('span');
+          condition.className = 'text-sm font-bold';
+          condition.textContent = folderData.weatherCondition || '中央氣象署預報';
+          const temperature = document.createElement('span');
+          temperature.className = 'text-2xl font-bold';
+          temperature.textContent = Number.isFinite(folderData.temperature) ? `${folderData.temperature}°C` : '';
+          weatherNow.append(condition, temperature);
+          visual.append(image, shade, weatherNow);
+          article.appendChild(visual);
+        }
+        article.append(eyebrow, articleTitle, ...report.paragraphs.map((text) => createReportParagraph(text)));
+        content.appendChild(article);
+      });
+      folder.append(summary, content);
+      return folder;
+    }
+
+    async function renderNearbyInformation(lat, lng, region) {
+      state.officialDataAbortController?.abort();
+      state.officialDataAbortController = new AbortController();
+      const signal = state.officialDataAbortController.signal;
+      const city = state.config.cities[region.cityCode];
+      if (!city) throw new Error(`找不到 ${region.cityName} 的資料服務設定`);
+
+      elements.infoTitle.textContent = `${region.cityName}${region.district}`;
+      const introduction = document.createElement('section');
+      introduction.className = 'border-b border-slate-200 pb-5';
+      const label = createReportParagraph('官方即時資料・八個主題', 'text-xs font-bold text-brand-700');
+      const title = document.createElement('h3');
+      title.className = 'mt-2 text-xl font-bold leading-7 text-slate-950';
+      title.textContent = `${region.cityName}${region.district}生活資訊報導`;
+      const description = createReportParagraph(
+        '以下內容直接整理中央氣象署與政府資料開放平臺的回應。五個資料夾預設全部展開；交通資訊已改為地圖圖層，可由地圖左上角分別開關。',
+        'mt-2 text-sm leading-6 text-slate-600'
+      );
+      const meta = createReportParagraph(
+        `${lat.toFixed(5)}, ${lng.toFixed(5)}｜行政區來源：${region.source}｜${formatOfficialTime(region.observedAt)}`,
+        'mt-3 font-mono text-[11px] leading-5 text-slate-500'
+      );
+      introduction.append(label, title, description, meta);
+
+      const loading = document.createElement('div');
+      loading.className = 'mt-4 flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600';
+      loading.innerHTML = '<span class="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>正在向中央氣象署與政府資料開放平臺讀取官方資料...';
+      elements.infoContent.replaceChildren(introduction, loading);
+
+      const [weatherResult, safetyResult, reportsResult] = await Promise.allSettled([
+        fetchOfficialData('/api/weather', { city: region.cityName, district: region.district, lat, lng }, signal),
+        fetchOfficialData('/api/safety', { city: region.cityName, lat, lng }, signal),
+        fetchOfficialData('/api/data-gov/reports', { cityTid: city.dataGovLocalTid }, signal)
+      ]);
+      if (signal.aborted) return;
+
+      const folderData = [];
+      if (weatherResult.status === 'fulfilled') {
+        const payload = weatherResult.value;
+        const weather = payload.data;
+        const facts = [];
+        if (Number.isFinite(weather.temperature)) facts.push(`最新預報溫度為 ${weather.temperature} 度`);
+        if (weather.phenomenon) facts.push(`天氣現象為「${weather.phenomenon}」`);
+        if (Number.isFinite(weather.precipitationProbability)) facts.push(`十二小時降雨機率為 ${weather.precipitationProbability}%`);
+        folderData.push({
+          name: '當地區域天氣', source: payload.source, observedAt: payload.observedAt,
+          imageUrl: facts.length ? weatherVisualFor(weather.phenomenon) : null,
+          imageAlt: `${region.cityName}${region.district}${weather.phenomenon || '天氣'}景象`,
+          weatherCondition: weather.phenomenon,
+          temperature: weather.temperature,
+          articles: facts.length ? [{
+            title: `【${region.district}官方氣象報導】中央氣象署最新鄉鎮預報`,
+            paragraphs: [
+              `${region.cityName}${region.district}${facts.join('，')}。`,
+              `以上數值直接取自${payload.source}最新可用預報時段；實際天氣仍可能隨預報更新而變化。`
+            ]
+          }] : unavailableArticle('當地區域天氣', new Error('中央氣象署回應中沒有可解析的天氣、溫度或降雨機率。'))
+        });
+      } else {
+        folderData.push({ name: '當地區域天氣', source: '中央氣象署 F-D0047-093', observedAt: null, articles: unavailableArticle('當地區域天氣', weatherResult.reason) });
+      }
+
+      if (safetyResult.status === 'fulfilled') {
+        const safety = safetyResult.value.data || {};
+        const articles = [];
+        (safety.warnings || []).forEach((warning) => articles.push({
+          title: `【氣象警特報】${warning.title}`,
+          paragraphs: [warning.description || '中央氣象署已發布警特報。', `發布時間：${formatOfficialTime(warning.issuedAt)}`]
+        }));
+        (safety.earthquakes || []).forEach((earthquake) => articles.push({
+          title: `【地震資訊】規模 ${earthquake.magnitude ?? '未提供'}`,
+          paragraphs: [earthquake.report, `時間：${formatOfficialTime(earthquake.originTime)}${earthquake.location ? `｜位置：${earthquake.location}` : ''}`]
+        }));
+        const closedRoads = state.lastTrafficRoads.filter((road) => road.status === 'closed');
+        if (closedRoads.length) articles.push({
+          title: '【道路封閉】中心點附近道路',
+          paragraphs: closedRoads.map((road) => `${road.roadName}${road.sectionName ? `・${road.sectionName}` : ''}`)
+        });
+        if ((safety.shelters || []).length) articles.push({
+          title: '【附近避難場所】',
+          paragraphs: safety.shelters.map((shelter) => `${shelter.name}（${shelter.type}，${shelter.lat.toFixed(5)}, ${shelter.lng.toFixed(5)}）`)
+        });
+        if (articles.length) folderData.push({
+          name: '警報、災害與避難資訊', source: safetyResult.value.source,
+          observedAt: safetyResult.value.observedAt, articles
+        });
+      }
+
+      const reportFolders = reportsResult.status === 'fulfilled'
+        ? reportsResult.value.data.map((report) => {
+          const datasets = report.datasets || [];
+          const paragraphs = datasets.map((dataset) => {
+            const summary = dataset.summary || '政府資料開放平臺未提供可用的詮釋摘要。';
+            return `資料集【${dataset.title}】由${dataset.agencyName || '未標示發布機關'}發布，官方摘要指出：${summary} 最近更新時間為 ${formatOfficialTime(dataset.updatedAt)}。`;
+          });
+          return {
+            name: report.name,
+            source: reportsResult.value.source,
+            observedAt: reportsResult.value.observedAt,
+            articles: paragraphs.length ? [{
+              title: `【${region.cityName}${report.name}政策資料報導】官方資料集重點整理`,
+              paragraphs
+            }] : unavailableArticle(report.name, new Error(report.error || `政府資料開放平臺未回傳${report.name}資料集。`))
+          };
+        })
+        : ['生育保健', '求職就業', '高齡照護', '生活安全及品質'].map((name) => ({
+          name,
+          source: '政府資料開放平臺 data.gov.tw',
+          observedAt: null,
+          articles: unavailableArticle(name, reportsResult.reason)
+        }));
+      folderData.push(...reportFolders);
+
+      const folders = document.createElement('div');
+      folders.className = 'mt-4 space-y-3';
+      folderData.forEach((folder) => folders.appendChild(renderOfficialFolder(folder)));
+      const disclaimer = createReportParagraph(
+        '本頁不使用推測數值。文字僅將官方 API 回傳欄位改寫為段落；資料正確性、更新頻率與涵蓋範圍由各官方資料來源負責。',
+        'mt-5 border-l-4 border-slate-300 pl-3 text-xs leading-5 text-slate-500'
+      );
+      elements.infoContent.replaceChildren(introduction, folders, disclaimer);
+    }
+
+    function openInfoPanel() {
+      elements.infoPanel.classList.remove('translate-y-full', 'md:translate-x-[calc(100%+2rem)]');
+    }
+
+    function closeInfoPanel() {
+      elements.infoPanel.classList.add('translate-y-full', 'md:translate-x-[calc(100%+2rem)]');
+    }
+
+    function openRelatedLinks() {
+      elements.relatedLinksModal.classList.remove('hidden');
+      elements.relatedLinksModal.classList.add('flex');
+      requestAnimationFrame(() => {
+        elements.relatedLinksModal.classList.remove('opacity-0');
+        elements.relatedLinksCard.classList.remove('translate-y-3');
+      });
+      elements.relatedLinksButton.setAttribute('aria-expanded', 'true');
+      elements.closeRelatedLinksButton.focus();
+    }
+
+    function closeRelatedLinks() {
+      elements.relatedLinksModal.classList.add('opacity-0');
+      elements.relatedLinksCard.classList.add('translate-y-3');
+      elements.relatedLinksButton.setAttribute('aria-expanded', 'false');
+      window.setTimeout(() => {
+        elements.relatedLinksModal.classList.add('hidden');
+        elements.relatedLinksModal.classList.remove('flex');
+      }, 200);
+      elements.relatedLinksButton.focus();
+    }
+
+    function closeMapSearchResults() {
+      elements.mapSearchResults.classList.add('hidden');
+      elements.mapSearchInput.setAttribute('aria-expanded', 'false');
+    }
+
+    function selectMapSearchResult(place, { keepResultsOpen = false } = {}) {
+      if (!state.map || !Number.isFinite(place.lat) || !Number.isFinite(place.lng)) return;
+      if (!state.map.getBounds().contains([place.lat, place.lng]) && !L.latLngBounds(TAIWAN_BOUNDS).contains([place.lat, place.lng])) {
+        showRequestMessage('搜尋結果不在臺灣範圍內');
+        return;
+      }
+      const icon = L.divIcon({
+        className: '', html: '<div class="selected-pin"></div>', iconSize: [24, 24], iconAnchor: [12, 24]
+      });
+      if (state.searchMarker) state.searchMarker.setLatLng([place.lat, place.lng]);
+      else state.searchMarker = L.marker([place.lat, place.lng], { icon, zIndexOffset: 1100 }).addTo(state.map);
+      state.searchMarker.bindTooltip(place.name, { direction: 'top', offset: [0, -22] }).openTooltip();
+      elements.mapSearchInput.value = place.name;
+      addSavedPlace({
+        type: 'recent', name: place.displayName || place.name, lat: place.lat, lng: place.lng,
+        cityCode: findNearestCityCode(place.lat, place.lng)
+      });
+      if (!keepResultsOpen) closeMapSearchResults();
+      flyMapTo([place.lat, place.lng], 17, { duration: 1.1 });
+    }
+
+    function renderMapSearchResults(places) {
+      elements.mapSearchResults.replaceChildren();
+      if (!places.length) {
+        elements.mapSearchResults.appendChild(createReportParagraph('找不到符合的臺灣地點。', 'p-3 text-sm text-slate-600'));
+      } else {
+        places.forEach((place, index) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'block w-full rounded-md px-3 py-2.5 text-left hover:bg-brand-50 focus:bg-brand-50 focus:outline-none';
+          button.setAttribute('role', 'option');
+          button.innerHTML = `<strong class="block truncate text-sm text-slate-900">${escapeHtml(place.name)}</strong><span class="mt-1 block line-clamp-2 text-xs leading-5 text-slate-500">${escapeHtml(place.displayName)}</span>`;
+          button.addEventListener('click', () => selectMapSearchResult(place));
+          elements.mapSearchResults.appendChild(button);
+          if (index === 0) button.dataset.bestMatch = 'true';
+        });
+      }
+      elements.mapSearchResults.classList.remove('hidden');
+      elements.mapSearchInput.setAttribute('aria-expanded', 'true');
+    }
+
+    async function searchMapLocation(event) {
+      event.preventDefault();
+      const query = elements.mapSearchInput.value.trim();
+      if (query.length < 2) {
+        showRequestMessage('請輸入至少 2 個字元');
+        elements.mapSearchInput.focus();
+        return;
+      }
+      state.mapSearchAbortController?.abort();
+      state.mapSearchAbortController = new AbortController();
+      const signal = state.mapSearchAbortController.signal;
+      elements.mapSearchButton.disabled = true;
+      elements.mapSearchButton.textContent = '搜尋中';
+      elements.mapSearchResults.replaceChildren(createReportParagraph('正在搜尋臺灣地點...', 'p-3 text-sm text-slate-600'));
+      elements.mapSearchResults.classList.remove('hidden');
+      elements.mapSearchInput.setAttribute('aria-expanded', 'true');
+      try {
+        const payload = await fetchOfficialData('/api/geocode/search', { q: query }, signal);
+        const places = payload.data || [];
+        renderMapSearchResults(places);
+        if (places.length) selectMapSearchResult(places[0], { keepResultsOpen: true });
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          elements.mapSearchResults.replaceChildren(createReportParagraph(error.message, 'p-3 text-sm text-red-700'));
+          elements.mapSearchResults.classList.remove('hidden');
+        }
+      } finally {
+        if (!signal.aborted) {
+          elements.mapSearchButton.disabled = false;
+          elements.mapSearchButton.textContent = '搜尋';
+        }
+      }
+    }
+
+    function openMenu() {
+      elements.drawerBackdrop.classList.remove('hidden');
+      requestAnimationFrame(() => elements.drawerBackdrop.classList.remove('opacity-0'));
+      elements.serviceDrawer.classList.remove('-translate-x-full');
+      elements.menuButton.setAttribute('aria-expanded', 'true');
+      elements.closeMenuButton.focus();
+    }
+
+    function closeMenu() {
+      elements.serviceDrawer.classList.add('-translate-x-full');
+      elements.drawerBackdrop.classList.add('opacity-0');
+      elements.menuButton.setAttribute('aria-expanded', 'false');
+      window.setTimeout(() => elements.drawerBackdrop.classList.add('hidden'), 300);
+      elements.menuButton.focus();
+    }
+
+    async function openCategoryModal(category) {
+      console.log('正在處理分類：', category?.name);
+      if (!state.config || !state.selectedCityCode) {
+        throw new Error('設定檔或目前縣市尚未完成初始化');
+      }
+      state.currentCategory = category;
+      const city = state.config.cities[state.selectedCityCode];
+      if (!city) throw new Error(`找不到縣市設定：${state.selectedCityCode}`);
+      const apiUrl = city.categories_api?.[category.id] || '';
+      elements.modalIcon.textContent = category.icon || '•';
+      elements.modalCity.textContent = city.cityName;
+      elements.modalTitle.textContent = category.name;
+      populateDistrictOptions(state.selectedCityCode);
+      renderDistrictReport(category, city, elements.modalDistrictSelect.value);
+      elements.modalStatus.classList.remove('hidden');
+      elements.modalStatus.innerHTML = '<span class="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>正在搜尋政府開放資料...';
+      elements.modalResults.classList.add('hidden');
+      elements.modalEmpty.classList.add('hidden');
+      elements.modalDatasetList.replaceChildren();
+      elements.modalApiLink.classList.toggle('hidden', !apiUrl);
+      if (apiUrl) {
+        elements.modalApiLink.href = apiUrl;
+        elements.modalApiLink.textContent = '開啟縣市專屬 API';
+      }
+
+      const catalogUrl = new URL('https://data.gov.tw/datasets/search');
+      catalogUrl.searchParams.set('ct', category.dataGovTid);
+      catalogUrl.searchParams.set('lgl-1', city.dataGovLocalTid);
+      elements.modalCatalogLink.href = catalogUrl.toString();
+
+      elements.categoryModal.classList.remove('hidden');
+      elements.categoryModal.classList.add('flex');
+      requestAnimationFrame(() => {
+        elements.categoryModal.classList.remove('opacity-0');
+        elements.modalCard.classList.remove('translate-y-3');
+      });
+      elements.closeModalButton.focus();
+
+      if (!category.dataGovTid || !city.dataGovLocalTid) {
+        showCategoryMessage('此分類目前缺少政府資料開放平臺代碼。');
+        return;
+      }
+
+      await fetchCategoryDatasets(category, city);
+    }
+
+    async function fetchCategoryDatasets(category, city) {
+      const categoryName = category.name;
+      const endpoint = new URL(
+        state.config.globalServices.dataGovDatasetSearch,
+        API_BASE_URL
+      ).toString();
+      const requestBody = {
+        bool: [{
+          'local_government_level_1.tid': {
+            value: [Number(city.dataGovLocalTid)]
+          }
+        }],
+        filter: [{
+          fields: 'category_tid',
+          query: Number(category.dataGovTid)
+        }],
+        page_num: 1,
+        page_limit: 6,
+        tids: [],
+        sort: 'resource_download_times_desc'
+      };
+
+      console.log('正在處理分類：', categoryName);
+      console.log('分類代理請求：', {
+        endpoint,
+        cityCode: state.selectedCityCode,
+        cityName: city.cityName,
+        requestBody
+      });
+
+      state.categoryAbortController?.abort();
+      state.categoryAbortController = new AbortController();
+      let responseStatus = null;
+      let responseStatusText = '';
+      let responseText = '';
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json; charset=utf-8'
+          },
+          cache: 'no-store',
+          credentials: 'same-origin',
+          signal: state.categoryAbortController.signal,
+          body: JSON.stringify(requestBody)
+        });
+
+        responseStatus = response.status;
+        responseStatusText = response.statusText;
+        responseText = await response.text();
+        console.log('分類代理回應：', {
+          endpoint,
+          status: responseStatus,
+          statusText: responseStatusText,
+          responseText
+        });
+
+        if (!response.ok) {
+          throw new Error(`代理 API 回傳 HTTP ${responseStatus} ${responseStatusText}`.trim());
+        }
+
+        let result;
+        try {
+          result = JSON.parse(responseText);
+        } catch (parseError) {
+          throw new Error(`代理 API 未回傳有效 JSON：${parseError.message}`);
+        }
+        if (!result.success) throw new Error(result.message || '資料平臺回傳失敗');
+        renderCategoryDatasets(result.payload?.search_result || [], result.payload?.search_count || 0, categoryName);
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.debug(`分類「${categoryName}」請求已取消`);
+          return;
+        }
+        console.error('讀取政府開放資料失敗：', {
+          endpoint,
+          categoryName,
+          cityCode: state.selectedCityCode,
+          requestBody,
+          status: responseStatus,
+          statusText: responseStatusText,
+          responseText,
+          error
+        });
+        showCategoryMessage(
+          responseStatus === 404
+            ? '找不到資料代理路由，請確認目前頁面是由 node server.js 提供。'
+            : '目前無法讀取政府開放資料，請稍後再試或開啟完整清單。'
+        );
+      }
+    }
+
+    function renderCategoryDatasets(datasets, total, categoryName = '') {
+      console.log('正在處理分類：', categoryName);
+      elements.modalStatus.classList.add('hidden');
+      if (datasets.length === 0) {
+        showCategoryMessage('政府資料開放平臺目前沒有回傳此分類的資料集。');
+        return;
+      }
+
+      const district = elements.modalDistrictSelect.value;
+      const reportParagraphs = datasets.slice(0, 3).map((dataset) => {
+        const summary = String(dataset.content || dataset.dataset_resource_note || dataset.dataset_resource_description || '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim() || '政府資料開放平臺未提供可用的詮釋摘要。';
+        return `資料集【${dataset.title}】由${dataset.agency_name || '未標示發布機關'}發布。官方摘要指出：${summary}`;
+      });
+      elements.districtReportTitle.textContent = `【${district}${categoryName}官方資料報導】`;
+      elements.districtReportLead.textContent = `以下內容根據政府資料開放平臺實際回傳的 ${datasets.length} 筆資料集整理，搜尋結果總數為 ${total} 筆。`;
+      elements.districtReportBodyOne.textContent = reportParagraphs[0] || '';
+      elements.districtReportBodyTwo.textContent = reportParagraphs[1] || '';
+      elements.districtReportBodyThree.textContent = reportParagraphs[2] || '';
+
+      const fragment = document.createDocumentFragment();
+      datasets.forEach((dataset) => {
+        const article = document.createElement('article');
+        article.className = 'border-b border-slate-200 py-4 last:border-b-0';
+        const title = document.createElement('h3');
+        title.className = 'text-sm font-bold leading-6 text-slate-900';
+        title.textContent = dataset.title;
+        const agency = createReportParagraph(
+          `發布機關：${dataset.agency_name || '未標示發布機關'}`,
+          'mt-1 text-xs font-bold text-brand-700'
+        );
+        const summary = String(dataset.content || dataset.dataset_resource_note || dataset.dataset_resource_description || '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim() || '政府資料開放平臺未提供可用的詮釋摘要。';
+        article.append(title, agency, createReportParagraph(summary));
+        fragment.appendChild(article);
+      });
+      elements.modalDatasetList.appendChild(fragment);
+      elements.modalCatalogLink.textContent = `查看官方完整清單（${total}）`;
+      elements.modalResults.classList.remove('hidden');
+    }
+
+    function showCategoryMessage(message) {
+      elements.modalStatus.classList.add('hidden');
+      elements.modalResults.classList.add('hidden');
+      elements.modalEmpty.textContent = message;
+      elements.modalEmpty.classList.remove('hidden');
+    }
+
+    function closeCategoryModal() {
+      state.categoryAbortController?.abort();
+      state.categoryAbortController = null;
+      elements.categoryModal.classList.add('opacity-0');
+      elements.modalCard.classList.add('translate-y-3');
+      window.setTimeout(() => {
+        elements.categoryModal.classList.add('hidden');
+        elements.categoryModal.classList.remove('flex');
+      }, 200);
+    }
+
+    function showConfigError(error) {
+      elements.categoryLoading.classList.add('hidden');
+      elements.configError.classList.remove('hidden');
+      elements.configErrorMessage.textContent = `請確認 api_config.json 與 index.html 位於同一資料夾，並透過本機伺服器開啟。（${error.message}）`;
+    }
+
+    function bindEventListener(element, eventName, handler, elementName) {
+      if (!element) {
+        console.error(`事件掛載失敗：找不到 ${elementName}`);
+        return false;
+      }
+      element.addEventListener(eventName, handler);
+      return true;
+    }
+
+    function bindEventListeners() {
+      console.log('開始掛載固定介面事件監聽器');
+      bindEventListener(elements.citySelect, 'change', (event) => {
+        const code = event.target.value;
+        state.selectedTransportLocation = null;
+        if (state.selectedMarker && state.map) {
+          state.map.removeLayer(state.selectedMarker);
+          state.selectedMarker = null;
+        }
+        setSelectedCity(code);
+        const city = state.config?.cities?.[code];
+        if (city && state.map) flyMapTo(city.mapCenter, city.mapZoom, { duration: 1.25 });
+      }, '#city-select');
+      bindEventListener(elements.locateButton, 'click', requestUserLocation, '#locate-button');
+      bindEventListener(elements.shareButton, 'click', shareCurrentMap, '#share-button');
+      bindEventListener(elements.saveCenterButton, 'click', saveCurrentCenter, '#save-center-button');
+      bindEventListener(elements.notificationButton, 'click', requestNotificationPermission, '#notification-button');
+      bindEventListener(elements.refreshIntervalSelect, 'change', schedulePeriodicUpdates, '#refresh-interval-select');
+      bindEventListener(elements.menuButton, 'click', openMenu, '#menu-button');
+      bindEventListener(elements.relatedLinksButton, 'click', openRelatedLinks, '#related-links-button');
+      bindEventListener(elements.closeRelatedLinksButton, 'click', closeRelatedLinks, '#close-related-links-button');
+      bindEventListener(elements.relatedLinksModal, 'click', (event) => {
+        if (event.target === elements.relatedLinksModal) closeRelatedLinks();
+      }, '#related-links-modal');
+      bindEventListener(elements.mapSearchForm, 'submit', searchMapLocation, '#map-search-form');
+      bindEventListener(elements.mapSearchInput, 'input', () => {
+        if (!elements.mapSearchInput.value.trim()) closeMapSearchResults();
+      }, '#map-search-input');
+      bindEventListener(document, 'click', (event) => {
+        if (!elements.mapSearchForm.contains(event.target)) closeMapSearchResults();
+      }, 'document map search dismissal');
+      bindEventListener(elements.closeMenuButton, 'click', closeMenu, '#close-menu-button');
+      bindEventListener(elements.drawerBackdrop, 'click', closeMenu, '#drawer-backdrop');
+      bindEventListener(elements.closeInfoButton, 'click', closeInfoPanel, '#close-info-button');
+      bindEventListener(elements.retryButton, 'click', loadConfig, '#retry-button');
+      bindEventListener(elements.modalDistrictSelect, 'change', (event) => {
+        if (!state.currentCategory || !state.config || !state.selectedCityCode) return;
+        const district = event.target.value;
+        state.selectedDistrictByCity[state.selectedCityCode] = district;
+        renderDistrictReport(
+          state.currentCategory,
+          state.config.cities[state.selectedCityCode],
+          district
+        );
+      }, '#modal-district-select');
+      bindEventListener(elements.closeModalButton, 'click', closeCategoryModal, '#close-modal-button');
+      bindEventListener(elements.categoryModal, 'click', (event) => {
+        if (event.target === elements.categoryModal) closeCategoryModal();
+      }, '#category-modal');
+      bindEventListener(document, 'keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        if (!elements.relatedLinksModal?.classList.contains('hidden')) closeRelatedLinks();
+        else if (!elements.mapSearchResults?.classList.contains('hidden')) closeMapSearchResults();
+        else if (!elements.categoryModal?.classList.contains('hidden')) closeCategoryModal();
+        else if (!elements.serviceDrawer?.classList.contains('-translate-x-full')) closeMenu();
+        else closeInfoPanel();
+      }, 'document');
+      bindEventListener(window, 'resize', () => refreshMapLayout([0, 100, 300]), 'window');
+      bindEventListener(window, 'orientationchange', () => refreshMapLayout([0, 150, 400]), 'window orientationchange');
+      bindEventListener(document, 'visibilitychange', () => {
+        if (!document.hidden) refreshMapLayout([0, 100, 300]);
+      }, 'document visibilitychange');
+      bindEventListener(document, 'transitionend', (event) => {
+        if (event.target.closest?.('#app')) scheduleMapResize(0);
+      }, 'document transitionend');
+      if (window.visualViewport) {
+        bindEventListener(window.visualViewport, 'resize', () => refreshMapLayout([0, 100, 300]), 'visualViewport');
+      }
+      console.log('固定介面事件監聽器掛載完成');
+    }
+
+    function runInitializationStep(stepName, initializer) {
+      try {
+        const result = initializer();
+        if (result instanceof Promise) {
+          result.catch((error) => console.error(`初始化步驟「${stepName}」失敗：`, error));
+        }
+      } catch (error) {
+        console.error(`初始化步驟「${stepName}」失敗：`, error);
+      }
+    }
+
+    try {
+      bindEventListeners();
+    } catch (error) {
+      console.error('固定事件監聽器初始化失敗：', error);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      runInitializationStep('地圖', initializeMap);
+      runInitializationStep('個人化設定', loadPersonalSettings);
+      if (state.map) state.map.invalidateSize({ pan: false });
+      refreshMapLayout([0, 100, 300]);
+      window.setTimeout(() => {
+        if (state.map) state.map.invalidateSize();
+      }, 400);
+    }, { once: true });
+
+    // 設定檔載入後自動定位；失敗或位置超出臺灣範圍時一律回到台北 101。
+    window.addEventListener('load', () => {
+      runInitializationStep('設定檔', loadConfig);
+      runInitializationStep('定位', requestUserLocation);
+      window.setTimeout(() => runInitializationStep('分享地圖狀態', applySharedMapState), 1600);
+      if (state.map) state.map.invalidateSize({ pan: false });
+      refreshMapLayout([0, 100, 300, 700]);
+      window.setTimeout(() => {
+        if (state.map) state.map.invalidateSize();
+      }, 400);
+    }, { once: true });
+  </script>
+</body>
+</html>
