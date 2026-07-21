@@ -463,6 +463,7 @@
       searchMarker: null,
       pendingLocation: null,
       usingFallback: false,
+      locationResolved: false,
       searchTimer: null,
       resizeTimer: null,
       resizeFrame: null,
@@ -722,6 +723,8 @@
 
     // 使用瀏覽器定位；部署環境必須使用 HTTPS 才能穩定取得權限。
     function requestUserLocation() {
+      state.locationResolved = false;
+      window.clearTimeout(state.transportRefreshTimer);
       if (elements.locationStatus) elements.locationStatus.textContent = '正在取得目前位置...';
       if (elements.locateButton) elements.locateButton.disabled = true;
 
@@ -746,6 +749,7 @@
       const position = [latitude, longitude];
       state.pendingLocation = position;
       state.usingFallback = false;
+      state.locationResolved = true;
       elements.locateButton.disabled = false;
       elements.locationStatus.textContent = `定位完成，誤差約 ${Math.round(accuracy)} 公尺`;
 
@@ -761,9 +765,11 @@
             .addTo(state.map)
             .bindPopup('<strong>你的位置</strong>');
         }
-        flyMapTo(position, 16, { duration: 1.2 });
+        if (state.transportHasInitialized) flyMapTo(position, 16, { duration: 1.2 });
+        else state.map.setView(position, 16, { animate: false });
       }
       if (state.config) selectNearestCity(latitude, longitude);
+      scheduleTransportLayerRefresh();
 
       // 定位視角設定後再次刷新，避免定位期間容器尺寸仍在變動。
       scheduleMapResize(200);
@@ -772,10 +778,12 @@
     function useFallbackLocation(reason) {
       state.pendingLocation = null;
       state.usingFallback = true;
+      state.locationResolved = true;
       elements.locateButton.disabled = false;
       elements.locationStatus.textContent = `${reason}，已顯示台北 101`;
       if (state.map) {
-        flyMapTo(TAIPEI_101, FALLBACK_ZOOM, { duration: 1 });
+        if (state.transportHasInitialized) flyMapTo(TAIPEI_101, FALLBACK_ZOOM, { duration: 1 });
+        else state.map.setView(TAIPEI_101, FALLBACK_ZOOM, { animate: false });
         if (state.userMarker) {
           state.map.removeLayer(state.userMarker);
           state.userMarker = null;
@@ -788,6 +796,7 @@
         }
       }
       if (state.config && state.config.cities.Taipei) setSelectedCity('Taipei');
+      scheduleTransportLayerRefresh();
 
       // 備援視角與 Marker 完成後再次強制補齊圖磚。
       scheduleMapResize(200);
@@ -950,10 +959,11 @@
         button.setAttribute('aria-label', `${button.dataset.label}，目前隱藏，點擊切換`);
         return;
       }
-      const loadingSequence = beginTransportLayerLoading(layerKey);
       state.map.addLayer(layer);
       button.setAttribute('aria-pressed', 'true');
       button.setAttribute('aria-label', `${button.dataset.label}，目前顯示，點擊切換`);
+      if (!state.locationResolved) return;
+      const loadingSequence = beginTransportLayerLoading(layerKey);
       const center = state.map.getCenter();
       refreshTransportLayers(center.lat, center.lng, findNearestCityCode(center.lat, center.lng), {
         layers: [layerKey],
@@ -1026,12 +1036,17 @@
     }
 
     function handleMapViewportChanged() {
+      if (!state.locationResolved) {
+        refreshMapLayout([0, 100]);
+        return;
+      }
       syncMapCenterSelection();
       scheduleTransportLayerRefresh();
     }
 
     function scheduleTransportLayerRefresh() {
       refreshMapLayout([0, 100]);
+      if (!state.locationResolved) return;
       window.clearTimeout(state.transportRefreshTimer);
       state.transportRefreshTimer = window.setTimeout(() => {
         if (!state.map || !state.config) return;
@@ -1510,7 +1525,7 @@
     }
 
     async function refreshTransportLayers(lat, lng, cityCode, options = {}) {
-      if (!state.transportLayers || !cityCode || !state.map) return;
+      if (!state.locationResolved || !state.transportLayers || !cityCode || !state.map) return;
       const requestedLayers = new Set(options.layers || ['traffic', 'bus', 'bike']);
       const force = options.force === true;
       const isActive = (layerKey) => requestedLayers.has(layerKey)
