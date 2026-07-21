@@ -7,6 +7,8 @@ const path = require('path');
 const ROOT = __dirname;
 const ENV_FILE = path.join(ROOT, '.env');
 const BIKE_STATION_CACHE_FILE = path.join(ROOT, 'bike_station_cache.json');
+const BUS_REALTIME_CACHE_FILE = process.env.BUS_REALTIME_CACHE_FILE || path.join(ROOT, 'bus_realtime_cache.json');
+const BUS_REFRESH_INTERVAL_MS = 15_000;
 
 function loadEnvironmentFile(filePath) {
   if (!fs.existsSync(filePath)) return false;
@@ -87,6 +89,16 @@ const PUBLIC_STATIC_FILES = new Set([
 
 let tdxTokenCache = { token: '', expiresAt: 0 };
 let bikeStationDiskCache = [];
+let nationwideBusSnapshot = {
+  observedAt: null,
+  attemptedAt: null,
+  byCity: {},
+  unavailableCities: [],
+  updateSequence: 0,
+  nextSourceIndex: 0
+};
+let nationwideBusRefreshPromise = null;
+let nationwideBusRefreshTimer = null;
 try {
   const cachedBikePayload = JSON.parse(fs.readFileSync(BIKE_STATION_CACHE_FILE, 'utf8'));
   const cachedBikeStations = Array.isArray(cachedBikePayload) ? cachedBikePayload : cachedBikePayload.data;
@@ -101,6 +113,21 @@ try {
   }
 } catch (error) {
   if (error.code !== 'ENOENT') console.error('Unable to read YouBike station cache:', error.message);
+}
+try {
+  const cachedBusSnapshot = JSON.parse(fs.readFileSync(BUS_REALTIME_CACHE_FILE, 'utf8'));
+  if (cachedBusSnapshot?.byCity && typeof cachedBusSnapshot.byCity === 'object') {
+    nationwideBusSnapshot = {
+      observedAt: cachedBusSnapshot.observedAt || null,
+      attemptedAt: cachedBusSnapshot.attemptedAt || null,
+      byCity: cachedBusSnapshot.byCity,
+      unavailableCities: Array.isArray(cachedBusSnapshot.unavailableCities) ? cachedBusSnapshot.unavailableCities : [],
+      updateSequence: Number(cachedBusSnapshot.updateSequence) || 0,
+      nextSourceIndex: Number(cachedBusSnapshot.nextSourceIndex) || 0
+    };
+  }
+} catch (error) {
+  if (error.code !== 'ENOENT') console.error('Unable to read nationwide bus cache:', error.message);
 }
 const tdxResponseCache = new Map();
 const roadNetworkCache = new Map();
@@ -737,9 +764,11 @@ function mapStopOfRoute(item, etaItems = [], plateNumber = '', currentStopUid = 
 }
 
 async function fetchBusRouteDetails(city, routeName, plateNumber = '', preferredDirection = null, currentStopUid = '') {
+  const stopPath = city === 'InterCity' ? 'v2/Bus/StopOfRoute' : 'v2/Bus/StopOfRoute/City';
+  const etaPath = city === 'InterCity' ? 'v2/Bus/EstimatedTimeOfArrival' : 'v2/Bus/EstimatedTimeOfArrival/City';
   const [stopPayload, etaPayload] = await Promise.all([
-    fetchTdxCityRoute('v2/Bus/StopOfRoute/City', city, routeName, { '$top': 100 }, 24 * 60 * 60 * 1000),
-    fetchTdxCityRoute('v2/Bus/EstimatedTimeOfArrival/City', city, routeName, { '$top': 1000 })
+    fetchTdxCityRoute(stopPath, city, routeName, { '$top': 100 }, 24 * 60 * 60 * 1000),
+    fetchTdxCityRoute(etaPath, city, routeName, { '$top': 1000 })
   ]);
   const etaItems = asArray(etaPayload);
   const routes = asArray(stopPayload).map((item) => mapStopOfRoute(item, etaItems, plateNumber, currentStopUid));
@@ -750,7 +779,8 @@ async function fetchBusRouteDetails(city, routeName, plateNumber = '', preferred
 async function proxyBusDetails(requestUrl, response) {
   try {
     const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
+    const requestedCity = requestUrl.searchParams.get('city');
+    const city = requestedCity === 'InterCity' ? 'InterCity' : requireTdxCity(requestUrl.searchParams, lat, lng);
     const routeName = String(requestUrl.searchParams.get('routeName') || '').trim();
     const plateNumber = String(requestUrl.searchParams.get('plateNumber') || '').trim();
     const directionValue = Number(requestUrl.searchParams.get('direction'));
@@ -812,60 +842,155 @@ async function proxyBusStopDetails(requestUrl, response) {
   }
 }
 
-async function proxyBus(requestUrl, response) {
+const BUS_STATUS_LABELS = {
+  0: '正常行駛', 1: '車禍', 2: '故障', 3: '塞車', 4: '緊急求援', 5: '加油',
+  90: '狀態不明', 91: '去回程不明', 98: '偏移路線', 99: '非營運狀態', 100: '客滿',
+  101: '包車出租', 255: '狀態未知'
+};
+
+function mapBusRealtime(bus, portalCityCode, tdxCity) {
+  const position = bus.BusPosition || {};
+  const lat = Number(position.PositionLat);
+  const lng = Number(position.PositionLon);
+  return {
+    plateNumber: bus.PlateNumb || '',
+    routeName: localizedText(bus.RouteName || bus.SubRouteName) || '未標示路線',
+    portalCityCode,
+    city: tdxCity,
+    lat,
+    lng,
+    speed: Number.isFinite(Number(bus.Speed)) ? Number(bus.Speed) : null,
+    azimuth: Number.isFinite(Number(bus.Azimuth)) ? Number(bus.Azimuth) : 0,
+    status: BUS_STATUS_LABELS[bus.BusStatus] || '狀態未知',
+    direction: bus.Direction ?? null,
+    currentStopUid: bus.StopUID || bus.StopID || '',
+    stopSequence: Number(bus.StopSequence) || null,
+    updateTime: bus.GPSTime || bus.UpdateTime || null,
+    distanceMeters: null
+  };
+}
+
+function persistNationwideBusSnapshot() {
   try {
-    const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
-    const payload = await fetchTdxCity('v2/Bus/RealTimeByFrequency/City', city, {
-      '$filter': coordinateBoxFilter('BusPosition', lat, lng, 2_000),
-      '$top': 1000
-    });
-    const busStatusLabels = {
-      0: '正常行駛', 1: '車禍', 2: '故障', 3: '塞車', 4: '緊急求援', 5: '加油',
-      90: '狀態不明', 91: '去回程不明', 98: '偏移路線', 99: '非營運狀態', 100: '客滿',
-      101: '包車出租', 255: '狀態未知'
-    };
-    const data = asArray(payload).map((bus) => {
-      const position = bus.BusPosition || {};
-      const busLat = Number(position.PositionLat);
-      const busLng = Number(position.PositionLon);
-      return {
-        plateNumber: bus.PlateNumb || '',
-        routeName: localizedText(bus.RouteName || bus.SubRouteName) || '未標示路線',
-        lat: busLat,
-        lng: busLng,
-        speed: Number.isFinite(Number(bus.Speed)) ? Number(bus.Speed) : null,
-        azimuth: Number.isFinite(Number(bus.Azimuth)) ? Number(bus.Azimuth) : 0,
-        status: busStatusLabels[bus.BusStatus] || '狀態未知',
-        direction: bus.Direction ?? null,
-        currentStopUid: bus.StopUID || bus.StopID || '',
-        stopSequence: Number(bus.StopSequence) || null,
-        updateTime: bus.GPSTime || bus.UpdateTime || null,
-        distanceMeters: Math.round(haversineMeters(lat, lng, busLat, busLng))
-      };
-    }).filter((bus) => Number.isFinite(bus.lat) && Number.isFinite(bus.lng) && bus.distanceMeters <= 2_000);
-    sendJson(response, 200, {
-      success: true,
-      source: '交通部 TDX 公車車機動態',
-      observedAt: new Date().toISOString(),
-      data
-    });
+    fs.mkdirSync(path.dirname(BUS_REALTIME_CACHE_FILE), { recursive: true });
+    const temporaryFile = `${BUS_REALTIME_CACHE_FILE}.tmp`;
+    fs.writeFileSync(temporaryFile, JSON.stringify(nationwideBusSnapshot));
+    fs.renameSync(temporaryFile, BUS_REALTIME_CACHE_FILE);
   } catch (error) {
-    if (error.status === 429) {
-      sendJson(response, 200, {
-        success: true,
-        degraded: true,
-        message: 'TDX 基礎方案額度暫時用盡，公車即時動態將在額度恢復後自動更新',
-        source: '交通部 TDX 公車動態降級模式',
-        observedAt: new Date().toISOString(),
-        data: []
-      });
-      return;
-    }
-    sendApiError(response, error);
+    console.error('Unable to persist nationwide bus cache:', error.message);
   }
 }
 
+function nationwideBusSources() {
+  const citySources = Object.entries(TDX_CITY_BY_PORTAL_CODE)
+    .map(([portalCityCode, tdxCity]) => ({ portalCityCode, tdxCity, interCity: false }));
+  const defaultIndex = citySources.findIndex((source) => source.portalCityCode === PORTAL_CONFIG.defaultCity);
+  if (defaultIndex > 0) citySources.unshift(citySources.splice(defaultIndex, 1)[0]);
+  citySources.push({ portalCityCode: 'InterCity', tdxCity: 'InterCity', interCity: true });
+  return citySources;
+}
+
+async function fetchNationwideBusSource(source) {
+  if (!source.interCity) {
+    return fetchTdxCity('v2/Bus/RealTimeByFrequency/City', source.tdxCity, { '$top': 10000 }, 0);
+  }
+  const url = new URL(`${TDX_API_ROOT}/v2/Bus/RealTimeByFrequency/InterCity`);
+  url.searchParams.set('$top', '10000');
+  url.searchParams.set('$format', 'JSON');
+  return fetchTdxUrl(url, 0);
+}
+
+async function refreshNationwideBusSnapshot() {
+  if (nationwideBusRefreshPromise) return nationwideBusRefreshPromise;
+  nationwideBusRefreshPromise = (async () => {
+    const attemptedAt = new Date().toISOString();
+    const nextByCity = { ...nationwideBusSnapshot.byCity };
+    const sources = nationwideBusSources();
+    const updatedSources = new Set();
+    const startIndex = nationwideBusSnapshot.nextSourceIndex % sources.length;
+    let nextSourceIndex = startIndex;
+    for (let offset = 0; offset < sources.length; offset += 1) {
+      const sourceIndex = (startIndex + offset) % sources.length;
+      const source = sources[sourceIndex];
+      try {
+        const payload = await fetchNationwideBusSource(source);
+        nextByCity[source.portalCityCode] = asArray(payload)
+          .map((bus) => mapBusRealtime(bus, source.portalCityCode, source.tdxCity))
+          .filter((bus) => Number.isFinite(bus.lat) && Number.isFinite(bus.lng));
+        updatedSources.add(source.portalCityCode);
+        nextSourceIndex = (sourceIndex + 1) % sources.length;
+      } catch (error) {
+        nextSourceIndex = sourceIndex;
+        if (error.status === 429) break;
+        nextSourceIndex = (sourceIndex + 1) % sources.length;
+      }
+    }
+    const unavailableCities = sources.map((source) => source.portalCityCode)
+      .filter((source) => !updatedSources.has(source));
+    nationwideBusSnapshot = {
+      observedAt: updatedSources.size ? new Date().toISOString() : nationwideBusSnapshot.observedAt,
+      attemptedAt,
+      byCity: nextByCity,
+      unavailableCities,
+      updateSequence: nationwideBusSnapshot.updateSequence + 1,
+      nextSourceIndex
+    };
+    persistNationwideBusSnapshot();
+    const totalBuses = Object.values(nextByCity).reduce((total, buses) => total + buses.length, 0);
+    console.log(`Nationwide bus snapshot: ${totalBuses} buses, ${updatedSources.size}/${sources.length} sources updated, next source ${sources[nextSourceIndex].portalCityCode}`);
+    return nationwideBusSnapshot;
+  })().finally(() => {
+    nationwideBusRefreshPromise = null;
+  });
+  return nationwideBusRefreshPromise;
+}
+
+function startNationwideBusRefresh() {
+  refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
+  nationwideBusRefreshTimer = setInterval(() => {
+    refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
+  }, BUS_REFRESH_INTERVAL_MS);
+  nationwideBusRefreshTimer.unref?.();
+}
+
+async function proxyBus(requestUrl, response) {
+  const scope = requestUrl.searchParams.get('scope') || 'nearby';
+  const allBuses = Object.values(nationwideBusSnapshot.byCity).flat();
+  let data = allBuses;
+  if (scope !== 'all') {
+    try {
+      const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
+      const requestedRadius = Number(requestUrl.searchParams.get('radius'));
+      const radiusMeters = Number.isFinite(requestedRadius)
+        ? Math.min(50_000, Math.max(1_000, requestedRadius))
+        : 5_000;
+      data = allBuses.map((bus) => ({
+        ...bus,
+        distanceMeters: Math.round(haversineMeters(lat, lng, bus.lat, bus.lng))
+      })).filter((bus) => bus.distanceMeters <= radiusMeters);
+    } catch (error) {
+      sendApiError(response, error);
+      return;
+    }
+  }
+  sendJson(response, 200, {
+    success: true,
+    degraded: nationwideBusSnapshot.unavailableCities.length > 0,
+    refreshing: Boolean(nationwideBusRefreshPromise),
+    source: '交通部 TDX 全臺公車車機動態快照',
+    observedAt: nationwideBusSnapshot.observedAt,
+    attemptedAt: nationwideBusSnapshot.attemptedAt,
+    refreshIntervalSeconds: BUS_REFRESH_INTERVAL_MS / 1000,
+    updateSequence: nationwideBusSnapshot.updateSequence,
+    totalBuses: allBuses.length,
+    cityCounts: Object.fromEntries(Object.entries(nationwideBusSnapshot.byCity).map(([city, buses]) => [city, buses.length])),
+    unavailableCities: nationwideBusSnapshot.unavailableCities,
+    message: nationwideBusSnapshot.unavailableCities.length
+      ? '部分縣市本次更新失敗，保留上一次成功快照'
+      : null,
+    data
+  });
+}
 async function proxyBusStops(requestUrl, response) {
   try {
     const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
@@ -1369,4 +1494,5 @@ server.listen(PORT, HOST, () => {
   console.log(`CWA datasets: ${CWA_DATASET_IDS.join(', ')}`);
   console.log(`CWA weather: ${process.env.CWA_API_KEY ? 'configured' : 'missing CWA_API_KEY'}`);
   console.log(`TDX transport: ${process.env.TDX_CLIENT_ID && process.env.TDX_CLIENT_SECRET ? 'configured' : 'missing TDX_CLIENT_ID/TDX_CLIENT_SECRET'}`);
+  startNationwideBusRefresh();
 });

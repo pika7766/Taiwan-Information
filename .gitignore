@@ -8,4 +8,5 @@ npm-debug.log*
 *.tmp.*
 leaflet-2.0.0-alpha.1/
 .continue/
+bus_realtime_cache.json*
 

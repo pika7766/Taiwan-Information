@@ -23,8 +23,11 @@ Requirements: Node.js 20 or later.
 | `TDX_CLIENT_ID` | Yes | TDX API authentication |
 | `TDX_CLIENT_SECRET` | Yes | TDX API authentication |
 | `CWA_DATASET_IDS` | No | CWA fallback dataset IDs |
+| `BUS_REALTIME_CACHE_FILE` | No | Persistent nationwide bus snapshot path, for example `/data/bus_realtime_cache.json` |
 
 Zeabur provides `PORT` automatically. The server listens on `0.0.0.0`, and the frontend uses the deployed site's own origin for API calls.
+
+The server maintains one shared nationwide TDX bus snapshot. It starts a refresh cycle every 15 seconds, retains the last successful data for cities that fail, and serves map clients from the snapshot. To keep the snapshot across restarts, mount a Zeabur Volume at `/data` and set `BUS_REALTIME_CACHE_FILE=/data/bus_realtime_cache.json`.
 
 ## Health check
 

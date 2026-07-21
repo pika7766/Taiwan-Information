@@ -234,7 +234,7 @@
           <div class="mt-3 flex items-center gap-2">
             <label for="refresh-interval-select" class="shrink-0 text-xs font-bold text-slate-600">更新頻率</label>
             <select id="refresh-interval-select" class="h-9 min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 text-sm">
-              <option value="10">10 秒</option><option value="30">30 秒</option><option value="60">1 分鐘</option><option value="120">2 分鐘</option><option value="300">5 分鐘</option>
+              <option value="15">15 秒</option>
             </select>
             <button id="notification-button" type="button" class="h-9 rounded-md border border-slate-300 bg-white px-3 text-xs font-bold hover:bg-slate-50">開啟通知</button>
           </div>
@@ -1057,8 +1057,9 @@
         state.savedPlaces = [];
         console.error('讀取收藏位置失敗：', error);
       }
-      const interval = Math.max(10, Number(localStorage.getItem('smart-life-refresh-seconds')) || 60);
-      elements.refreshIntervalSelect.value = String([10, 30, 60, 120, 300].includes(interval) ? interval : 60);
+      localStorage.setItem('smart-life-refresh-seconds', '15');
+      elements.refreshIntervalSelect.value = '15';
+      elements.refreshIntervalSelect.disabled = true;
       renderSavedPlaces();
       schedulePeriodicUpdates();
     }
@@ -1184,7 +1185,7 @@
       elements.infoContent.innerHTML = '<div class="flex items-center gap-3 text-sm text-slate-600"><span class="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>正在讀取站序與預估到站...</div>';
       try {
         const payload = await fetchOfficialData('/api/tdx/bus-details', {
-          lat: bus.lat, lng: bus.lng, city: findNearestCityCode(bus.lat, bus.lng), routeName: bus.routeName,
+          lat: bus.lat, lng: bus.lng, city: bus.portalCityCode || findNearestCityCode(bus.lat, bus.lng), routeName: bus.routeName,
           plateNumber: bus.plateNumber, direction: bus.direction ?? '', currentStopUid: bus.currentStopUid || ''
         });
         const wrapper = document.createElement('div');
@@ -1386,7 +1387,7 @@
 
     function schedulePeriodicUpdates() {
       window.clearTimeout(state.notificationTimer);
-      const seconds = Math.max(10, Number(elements.refreshIntervalSelect?.value) || 60);
+      const seconds = 15;
       localStorage.setItem('smart-life-refresh-seconds', String(seconds));
       state.notificationTimer = window.setTimeout(async () => {
         if (!document.hidden && state.map && state.config) {
@@ -1403,12 +1404,13 @@
         }
         schedulePeriodicUpdates();
       }, seconds * 1000);
-      if (elements.personalStatus) elements.personalStatus.textContent = `頁面開啟時每 ${seconds} 秒更新交通與收藏站點。`;
+      if (elements.personalStatus) elements.personalStatus.textContent = `全臺公車快照每 ${seconds} 秒更新；收藏站點依通知節流更新。`;
     }
 
     function renderBusLayer(payload) {
       const layer = state.busVehicleLayer;
       if (!layer) return;
+      if (!payload.observedAt && !(payload.data || []).length) return;
       layer.clearLayers();
       (payload.data || []).forEach((bus) => {
         if (!Number.isFinite(bus.lat) || !Number.isFinite(bus.lng)) return;
@@ -1572,7 +1574,7 @@
         east: Math.min(TAIWAN_BOUNDS[1][1], bounds.getEast()),
         zoom: state.map.getZoom()
       };
-      const busParameters = { lat, lng, city: findNearestCityCode(lat, lng) };
+      const busParameters = { lat, lng, city: findNearestCityCode(lat, lng), radius: Math.min(50000, Math.max(1000, viewportRadius)) };
       const tasks = [];
       let busRequest = null;
       let roadsRequest = null;
