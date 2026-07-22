@@ -45,7 +45,10 @@ async function stopChild(child) {
 }
 
 async function runScenario({ allRateLimited }) {
-  const calls = { first429: 0, second429: 0, secondSuccess: 0, parkingLot: 0, parkingAvailability: 0 };
+  const calls = {
+    first429: 0, second429: 0, secondSuccess: 0,
+    parkingLot: 0, parkingAvailability: 0, disabledParking: 0
+  };
   const mock = http.createServer((request, response) => {
     if (request.url === '/token') {
       let body = '';
@@ -74,7 +77,7 @@ async function runScenario({ allRateLimited }) {
     if (authorization === 'Bearer second-token') {
       calls.secondSuccess += 1;
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      if (request.url.includes('/v1/Parking/OffStreet/ParkingLot/City/Taipei')) {
+      if (request.url.includes('/v1/Parking/OffStreet/CarPark/City/Taipei')) {
         calls.parkingLot += 1;
         response.end(JSON.stringify([{
           CarParkID: 'P001',
@@ -98,6 +101,9 @@ async function runScenario({ allRateLimited }) {
           DataCollectTime: '2026-07-22T12:00:00+08:00'
         }]));
         return;
+      }
+      if (request.url.includes('/v1/Parking/OffStreet/CarPark/City/NewTaipei')) {
+        calls.disabledParking += 1;
       }
       response.end('[]');
       return;
@@ -125,8 +131,11 @@ async function runScenario({ allRateLimited }) {
     TDX_CLIENT_SECRET_2: 'second-secret',
     TDX_CREDENTIALS_JSON: '[]',
     TDX_REFRESH_INTERVAL_MS: '5000',
+    BUS_REFRESH_INTERVAL_MS: '12000',
     TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS: '300000',
-    TDX_REQUEST_SPACING_MS: '1'
+    TDX_REQUEST_SPACING_MS: '1',
+    ADMIN_USERNAME: 'admin',
+    ADMIN_PASSWORD: '7766'
   };
   const child = spawn(process.execPath, ['server.js'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
@@ -148,7 +157,52 @@ async function runScenario({ allRateLimited }) {
       `http://127.0.0.1:${appPort}/api/tdx/parking?lat=25.033&lng=121.5654&city=Taipei&radius=5000`
     );
     const parkingPayload = await parkingResponse.json();
-    return { calls, status, stopResponse, stopPayload, parkingResponse, parkingPayload };
+    let admin = null;
+    if (!allRateLimited) {
+      const unauthorizedStatusResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/status`);
+      const wrongLoginResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'wrong' })
+      });
+      const loginResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: '7766' })
+      });
+      const loginPayload = await loginResponse.json();
+      const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+      const disableResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/tdx`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ enabled: false })
+      });
+      const disablePayload = await disableResponse.json();
+      const disabledParkingResponse = await fetch(
+        `http://127.0.0.1:${appPort}/api/tdx/parking?lat=25.016&lng=121.462&city=NewTaipei&radius=5000`
+      );
+      const disabledParkingPayload = await disabledParkingResponse.json();
+      const enableResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/tdx`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ enabled: true })
+      });
+      const enablePayload = await enableResponse.json();
+      await fetch(`http://127.0.0.1:${appPort}/api/admin/logout`, {
+        method: 'POST', headers: { Cookie: cookie }
+      });
+      const loggedOutStatusResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/status`, {
+        headers: { Cookie: cookie }
+      });
+      admin = {
+        unauthorizedStatus: unauthorizedStatusResponse.status,
+        wrongLoginStatus: wrongLoginResponse.status,
+        loginStatus: loginResponse.status,
+        loginPayload,
+        disablePayload,
+        disabledParkingStatus: disabledParkingResponse.status,
+        disabledParkingPayload,
+        enablePayload,
+        loggedOutStatus: loggedOutStatusResponse.status
+      };
+    }
+    return { calls, status, stopResponse, stopPayload, parkingResponse, parkingPayload, admin };
   } catch (error) {
     error.message += `\nServer output:\n${output}`;
     throw error;
@@ -163,6 +217,7 @@ test('TDX credentials rotate on 429 and report only aggregate status', async () 
   const result = await runScenario({ allRateLimited: false });
   assert.equal(result.status.credentials.tdxCredentialCount, 2);
   assert.equal(result.status.credentials.tdxAvailableCredentialCount, 1);
+  assert.equal(result.status.busRefreshIntervalSeconds, 12);
   assert.equal(result.status.tdxRefreshIntervalSeconds, 5);
   assert.equal(result.status.tdxTrafficBikeRefreshIntervalSeconds, 300);
   assert.equal(result.status.tdxParkingRefreshIntervalSeconds, 300);
@@ -179,6 +234,16 @@ test('TDX credentials rotate on 429 and report only aggregate status', async () 
   assert.ok(result.parkingPayload.data[0].distanceMeters < 50);
   assert.equal(result.calls.parkingLot, 1);
   assert.equal(result.calls.parkingAvailability, 1);
+  assert.equal(result.admin.unauthorizedStatus, 401);
+  assert.equal(result.admin.wrongLoginStatus, 401);
+  assert.equal(result.admin.loginStatus, 200);
+  assert.equal(result.admin.loginPayload.authenticated, true);
+  assert.equal(result.admin.disablePayload.tdxFetchingEnabled, false);
+  assert.equal(result.admin.disabledParkingStatus, 503);
+  assert.equal(result.admin.disabledParkingPayload.message, '管理員已暫停 TDX 資料更新');
+  assert.equal(result.calls.disabledParking, 0);
+  assert.equal(result.admin.enablePayload.tdxFetchingEnabled, true);
+  assert.equal(result.admin.loggedOutStatus, 401);
 });
 
 test('the server reports the requested message only after every credential receives 429', async () => {

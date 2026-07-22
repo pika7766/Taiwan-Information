@@ -3,6 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const ROOT = __dirname;
 const ENV_FILE = path.join(ROOT, '.env');
@@ -43,7 +44,13 @@ const TDX_RATE_LIMIT_COOLDOWN_MS = Math.max(
   Number(process.env.TDX_RATE_LIMIT_COOLDOWN_MS) || 15 * 60 * 1000
 );
 const TDX_REQUEST_SPACING_MS = Math.max(0, Number(process.env.TDX_REQUEST_SPACING_MS) || 600);
-const BUS_REFRESH_INTERVAL_MS = TDX_REFRESH_INTERVAL_MS;
+const BUS_REFRESH_INTERVAL_MS = Math.max(
+  1_000,
+  Number(process.env.BUS_REFRESH_INTERVAL_MS) || 12_000
+);
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '7766';
+const ADMIN_SESSION_TTL_MS = Math.max(60_000, Number(process.env.ADMIN_SESSION_TTL_MS) || 12 * 60 * 60 * 1000);
 const PORTAL_CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, 'api_config.json'), 'utf8').replace(/^\uFEFF/, ''));
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT) || 4174;
@@ -153,6 +160,10 @@ let tdxRequestQueue = Promise.resolve();
 let lastTdxRequestAt = 0;
 let tdxCacheRefreshPromise = null;
 let tdxCacheRefreshTimer = null;
+let tdxFetchingEnabled = !/^(?:0|false|off)$/i.test(process.env.TDX_FETCH_ENABLED || 'true');
+let tdxFetchingChangedAt = new Date().toISOString();
+const adminSessions = new Map();
+const adminLoginAttempts = new Map();
 
 class UpstreamError extends Error {
   constructor(message, status = 502, details = '') {
@@ -203,6 +214,142 @@ async function readJsonBody(request) {
   } catch (error) {
     throw new UpstreamError(`Invalid JSON request body: ${error.message}`, 400);
   }
+}
+
+function constantTimeEqual(actual, expected) {
+  const actualBuffer = Buffer.from(String(actual || ''), 'utf8');
+  const expectedBuffer = Buffer.from(String(expected || ''), 'utf8');
+  return actualBuffer.length === expectedBuffer.length
+    && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function requestIp(request) {
+  return String(request.headers['x-forwarded-for'] || request.socket.remoteAddress || '')
+    .split(',')[0].trim();
+}
+
+function parseCookies(request) {
+  return Object.fromEntries(String(request.headers.cookie || '').split(';').flatMap((part) => {
+    const separator = part.indexOf('=');
+    if (separator < 1) return [];
+    const rawValue = part.slice(separator + 1).trim();
+    try {
+      return [[part.slice(0, separator).trim(), decodeURIComponent(rawValue)]];
+    } catch (error) {
+      return [[part.slice(0, separator).trim(), rawValue]];
+    }
+  }));
+}
+
+function adminSessionFor(request) {
+  const token = parseCookies(request).tdx_admin_session;
+  if (!token) return null;
+  const session = adminSessions.get(token);
+  if (!session || Date.now() >= session.expiresAt) {
+    adminSessions.delete(token);
+    return null;
+  }
+  return { token, ...session };
+}
+
+function adminSessionCookie(request, token, maxAgeSeconds) {
+  const forwardedProtocol = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const secure = forwardedProtocol === 'https' || request.socket.encrypted;
+  return `tdx_admin_session=${encodeURIComponent(token)}; Path=/api/admin; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSeconds}${secure ? '; Secure' : ''}`;
+}
+
+function sendAdminUnauthorized(response) {
+  sendJson(response, 401, { success: false, message: '管理員登入已失效，請重新登入' });
+}
+
+function adminStatusPayload() {
+  return {
+    success: true,
+    authenticated: true,
+    tdxFetchingEnabled,
+    tdxFetchingChangedAt,
+    tdxCredentialCount: tdxCredentials.length,
+    tdxAvailableCredentialCount: tdxCredentials
+      .filter((credential) => Date.now() >= credential.rateLimitedUntil).length,
+    cachedTdxQueries: [...tdxResponseCache.values()].filter((entry) => entry.data).length,
+    nationwideBusObservedAt: nationwideBusSnapshot.observedAt,
+    acquisitionScope: {
+      cityDataIsCityScopedByTdx: true,
+      nationwideSingleRequestAvailable: false,
+      strategy: '完整縣市資料共用快取；全臺公車使用伺服器快照'
+    }
+  };
+}
+
+async function handleAdminLogin(request, response) {
+  const ip = requestIp(request);
+  const attempt = adminLoginAttempts.get(ip);
+  if (attempt?.blockedUntil > Date.now()) {
+    sendJson(response, 429, { success: false, message: '登入失敗次數過多，請稍後再試' });
+    return;
+  }
+
+  try {
+    const { parsed } = await readJsonBody(request);
+    const valid = constantTimeEqual(parsed?.username, ADMIN_USERNAME)
+      && constantTimeEqual(parsed?.password, ADMIN_PASSWORD);
+    if (!valid) {
+      const failures = (attempt?.failures || 0) + 1;
+      adminLoginAttempts.set(ip, {
+        failures: failures >= 5 ? 0 : failures,
+        blockedUntil: failures >= 5 ? Date.now() + 15 * 60 * 1000 : 0
+      });
+      sendJson(response, 401, { success: false, message: '帳號或密碼錯誤' });
+      return;
+    }
+
+    adminLoginAttempts.delete(ip);
+    const token = crypto.randomBytes(32).toString('base64url');
+    adminSessions.set(token, { username: ADMIN_USERNAME, expiresAt: Date.now() + ADMIN_SESSION_TTL_MS });
+    sendJson(response, 200, adminStatusPayload(), {
+      'Set-Cookie': adminSessionCookie(request, token, Math.floor(ADMIN_SESSION_TTL_MS / 1000))
+    });
+  } catch (error) {
+    sendApiError(response, error);
+  }
+}
+
+function handleAdminStatus(request, response) {
+  if (!adminSessionFor(request)) {
+    sendAdminUnauthorized(response);
+    return;
+  }
+  sendJson(response, 200, adminStatusPayload());
+}
+
+async function handleAdminTdxSetting(request, response) {
+  if (!adminSessionFor(request)) {
+    sendAdminUnauthorized(response);
+    return;
+  }
+  try {
+    const { parsed } = await readJsonBody(request);
+    if (typeof parsed?.enabled !== 'boolean') {
+      throw new UpstreamError('enabled must be a boolean', 400);
+    }
+    tdxFetchingEnabled = parsed.enabled;
+    tdxFetchingChangedAt = new Date().toISOString();
+    sendJson(response, 200, adminStatusPayload());
+    if (tdxFetchingEnabled) {
+      refreshActiveTdxCache().catch((error) => console.error('TDX cache resume failed:', error.message));
+      refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus resume failed:', error.message));
+    }
+  } catch (error) {
+    sendApiError(response, error);
+  }
+}
+
+function handleAdminLogout(request, response) {
+  const session = adminSessionFor(request);
+  if (session) adminSessions.delete(session.token);
+  sendJson(response, 200, { success: true }, {
+    'Set-Cookie': adminSessionCookie(request, '', 0)
+  });
 }
 
 async function fetchJson(url, options = {}, timeoutMs = 20_000) {
@@ -390,6 +537,9 @@ function areAllTdxCredentialsRateLimited() {
 }
 
 async function requestTdxUrl(url) {
+  if (!tdxFetchingEnabled) {
+    throw new UpstreamError('管理員已暫停 TDX 資料更新', 503);
+  }
   if (!tdxCredentials.length) {
     throw new UpstreamError('No complete TDX credential pair is configured', 503);
   }
@@ -418,9 +568,14 @@ async function requestTdxUrl(url) {
     }
 
     try {
-      const data = await queueTdxRequest(() => fetchJson(url, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
-      }, 60_000));
+      const data = await queueTdxRequest(() => {
+        if (!tdxFetchingEnabled) {
+          throw new UpstreamError('管理員已暫停 TDX 資料更新', 503);
+        }
+        return fetchJson(url, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+        }, 60_000);
+      });
       activeTdxCredentialIndex = index;
       return data;
     } catch (error) {
@@ -499,6 +654,7 @@ async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
 }
 
 async function refreshActiveTdxCache() {
+  if (!tdxFetchingEnabled) return [];
   if (tdxCacheRefreshPromise) return tdxCacheRefreshPromise;
   const now = Date.now();
   const entries = [...tdxResponseCache.values()]
@@ -1099,6 +1255,7 @@ async function fetchNationwideBusSource(source) {
 }
 
 async function refreshNationwideBusSnapshot() {
+  if (!tdxFetchingEnabled) return nationwideBusSnapshot;
   if (nationwideBusRefreshPromise) return nationwideBusRefreshPromise;
   nationwideBusRefreshPromise = (async () => {
     const attemptedAt = new Date().toISOString();
@@ -1155,6 +1312,7 @@ async function proxyBus(requestUrl, response) {
   const scope = requestUrl.searchParams.get('scope') || 'nearby';
   const allBuses = Object.values(nationwideBusSnapshot.byCity).flat();
   const rateLimited = areAllTdxCredentialsRateLimited();
+  const paused = !tdxFetchingEnabled;
   let data = allBuses;
   if (scope !== 'all') {
     try {
@@ -1174,7 +1332,7 @@ async function proxyBus(requestUrl, response) {
   }
   sendJson(response, 200, {
     success: true,
-    degraded: rateLimited || nationwideBusSnapshot.unavailableCities.length > 0,
+    degraded: paused || rateLimited || nationwideBusSnapshot.unavailableCities.length > 0,
     refreshing: Boolean(nationwideBusRefreshPromise),
     source: '交通部 TDX 全臺公車車機動態快照',
     observedAt: nationwideBusSnapshot.observedAt,
@@ -1184,11 +1342,13 @@ async function proxyBus(requestUrl, response) {
     totalBuses: allBuses.length,
     cityCounts: Object.fromEntries(Object.entries(nationwideBusSnapshot.byCity).map(([city, buses]) => [city, buses.length])),
     unavailableCities: nationwideBusSnapshot.unavailableCities,
-    message: rateLimited
-      ? '請求過多，請稍後再試'
-      : nationwideBusSnapshot.unavailableCities.length
-        ? '部分縣市本次更新失敗，保留上一次成功快照'
-        : null,
+    message: paused
+      ? '管理員已暫停 TDX 資料更新，目前顯示伺服器快取'
+      : rateLimited
+        ? '請求過多，請稍後再試'
+        : nationwideBusSnapshot.unavailableCities.length
+          ? '部分縣市本次更新失敗，保留上一次成功快照'
+          : null,
     data
   });
 }
@@ -1379,7 +1539,7 @@ function parkingSpaceTotal(entries, field) {
 }
 
 async function fetchParkingCityData(city, origin, radiusMeters) {
-  const parkingLotsPayload = await fetchTdxCity('v1/Parking/OffStreet/ParkingLot/City', city, {
+  const parkingLotsPayload = await fetchTdxCity('v1/Parking/OffStreet/CarPark/City', city, {
     '$top': 10000
   }, TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS);
   let availabilityPayload = [];
@@ -1539,9 +1699,10 @@ async function proxyTraffic(requestUrl, response) {
     const city = requireTdxCity(requestUrl.searchParams, lat, lng);
     const requestedRadius = Number(requestUrl.searchParams.get('radius'));
     const radiusMeters = Number.isFinite(requestedRadius) ? Math.min(30_000, Math.max(1000, requestedRadius)) : 5000;
-    const sectionsPayload = await fetchTdxCity('v2/Road/Traffic/Section/City', city, {}, 60 * 60 * 1000);
-    const shapesPayload = await fetchTdxCity('v2/Road/Traffic/SectionShape/City', city, {}, 60 * 60 * 1000);
-    const livePayload = await fetchTdxCity('v2/Road/Traffic/Live/City', city);
+    const fullCityParameters = { '$top': 10000 };
+    const sectionsPayload = await fetchTdxCity('v2/Road/Traffic/Section/City', city, fullCityParameters, 60 * 60 * 1000);
+    const shapesPayload = await fetchTdxCity('v2/Road/Traffic/SectionShape/City', city, fullCityParameters, 60 * 60 * 1000);
+    const livePayload = await fetchTdxCity('v2/Road/Traffic/Live/City', city, fullCityParameters);
     const sections = asArray(sectionsPayload, ['Sections']);
     const shapes = asArray(shapesPayload, ['SectionShapes']);
     const liveItems = asArray(livePayload, ['LiveTraffics']);
@@ -1712,6 +1873,8 @@ const server = http.createServer(async (request, response) => {
         tdxAvailableCredentialCount: tdxCredentials
           .filter((credential) => Date.now() >= credential.rateLimitedUntil).length
       },
+      tdxFetchingEnabled,
+      busRefreshIntervalSeconds: BUS_REFRESH_INTERVAL_MS / 1000,
       tdxRefreshIntervalSeconds: TDX_REFRESH_INTERVAL_MS / 1000,
       tdxTrafficBikeRefreshIntervalSeconds: TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS / 1000,
       tdxParkingRefreshIntervalSeconds: TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS / 1000
@@ -1720,6 +1883,22 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === 'POST' && requestUrl.pathname === '/api/data-gov/datasets') {
     await proxyDatasetSearch(request, response);
+    return;
+  }
+  if (request.method === 'POST' && requestUrl.pathname === '/api/admin/login') {
+    await handleAdminLogin(request, response);
+    return;
+  }
+  if (request.method === 'GET' && requestUrl.pathname === '/api/admin/status') {
+    handleAdminStatus(request, response);
+    return;
+  }
+  if (request.method === 'POST' && requestUrl.pathname === '/api/admin/tdx') {
+    await handleAdminTdxSetting(request, response);
+    return;
+  }
+  if (request.method === 'POST' && requestUrl.pathname === '/api/admin/logout') {
+    handleAdminLogout(request, response);
     return;
   }
   if (request.method === 'GET' && requestUrl.pathname === '/api/geocode/reverse') {

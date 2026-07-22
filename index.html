@@ -105,7 +105,7 @@
     .bike-cluster-symbol span { display: block; font-size: 11px; font-weight: 700; }
     .parking-cluster { background: transparent; border: 0; }
     .parking-cluster-symbol {
-      display: grid; place-items: center; border: 4px solid rgba(255, 255, 255, .92); border-radius: 6px;
+      display: grid; place-items: center; border: 4px solid rgba(255, 255, 255, .92); border-radius: 999px;
       background: #374151; color: white; font-weight: 850; line-height: 1; box-shadow: 0 5px 16px rgba(15, 23, 42, .38);
     }
     .parking-cluster-symbol span { display: block; font-size: 11px; font-weight: 800; }
@@ -244,13 +244,16 @@
           <div class="mt-3 flex items-center gap-2">
             <label for="refresh-interval-select" class="shrink-0 text-xs font-bold text-slate-600">公車更新頻率</label>
             <select id="refresh-interval-select" class="h-9 min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 text-sm">
-              <option value="5">5 秒</option>
+              <option value="12">12 秒</option>
             </select>
             <button id="notification-button" type="button" class="h-9 rounded-md border border-slate-300 bg-white px-3 text-xs font-bold hover:bg-slate-50">開啟通知</button>
           </div>
           <p id="personal-status" class="mt-2 text-xs leading-5 text-slate-500" aria-live="polite"></p>
           <div id="saved-place-list" class="personal-list mt-3 space-y-2"></div>
         </section>
+        <button id="admin-button" type="button" class="mb-4 flex h-11 w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-bold text-slate-800 hover:border-brand-600 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-controls="admin-modal" aria-expanded="false">
+          <span aria-hidden="true">⚙</span><span>管理員</span>
+        </button>
         <div id="category-grid" class="grid grid-cols-3 gap-2" aria-live="polite"></div>
         <div id="category-loading" class="grid min-h-48 place-items-center text-sm text-slate-500" role="status">正在載入服務...</div>
         <div id="config-error" class="hidden rounded-md border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-800" role="alert">
@@ -260,6 +263,47 @@
         </div>
       </div>
     </aside>
+
+    <div id="admin-modal" class="absolute inset-0 z-[1600] hidden items-center justify-center bg-slate-950/55 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+      <div id="admin-card" class="w-full max-w-md translate-y-3 rounded-lg bg-white shadow-panel transition-transform duration-200">
+        <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <div>
+            <p class="text-xs font-bold text-brand-700">伺服器控制</p>
+            <h2 id="admin-title" class="mt-1 text-xl font-bold">管理員</h2>
+          </div>
+          <button id="close-admin-button" type="button" class="grid h-10 w-10 place-items-center rounded-md text-2xl text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-label="關閉管理員視窗">×</button>
+        </div>
+        <div class="p-5">
+          <form id="admin-login-form" class="space-y-4">
+            <div>
+              <label for="admin-username" class="text-sm font-bold text-slate-700">帳號</label>
+              <input id="admin-username" name="username" type="text" maxlength="100" autocomplete="username" required class="mt-2 h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100">
+            </div>
+            <div>
+              <label for="admin-password" class="text-sm font-bold text-slate-700">密碼</label>
+              <input id="admin-password" name="password" type="password" maxlength="200" autocomplete="current-password" required class="mt-2 h-11 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-brand-600 focus:ring-2 focus:ring-brand-100">
+            </div>
+            <button id="admin-login-button" type="submit" class="h-11 w-full rounded-md bg-brand-700 px-4 text-sm font-bold text-white hover:bg-brand-800 disabled:cursor-wait disabled:opacity-60">登入</button>
+          </form>
+          <div id="admin-panel" class="hidden space-y-4">
+            <label class="flex min-h-14 items-center justify-between gap-4 rounded-md border border-slate-200 px-4 py-3">
+              <span><strong class="block text-sm text-slate-900">TDX 資料取得</strong><span id="admin-tdx-state" class="mt-1 block text-xs text-slate-500"></span></span>
+              <input id="admin-tdx-toggle" type="checkbox" role="switch" class="h-5 w-5 shrink-0 accent-brand-700">
+            </label>
+            <dl class="divide-y divide-slate-200 border-y border-slate-200 text-sm">
+              <div class="flex items-center justify-between py-3"><dt class="text-slate-500">可用憑證</dt><dd id="admin-credentials" class="font-bold text-slate-900">-</dd></div>
+              <div class="flex items-center justify-between py-3"><dt class="text-slate-500">TDX 快取</dt><dd id="admin-cache-count" class="font-bold text-slate-900">-</dd></div>
+            </dl>
+            <p id="admin-scope" class="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"></p>
+            <div class="flex gap-2">
+              <button id="admin-refresh-button" type="button" class="h-10 flex-1 rounded-md border border-slate-300 px-3 text-sm font-bold hover:bg-slate-50">重新整理</button>
+              <button id="admin-logout-button" type="button" class="h-10 flex-1 rounded-md border border-red-200 px-3 text-sm font-bold text-red-700 hover:bg-red-50">登出</button>
+            </div>
+          </div>
+          <p id="admin-message" class="mt-4 hidden rounded-md border px-3 py-2 text-sm" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
 
     <!-- 常用網站依主題整理，內容區可獨立捲動。 -->
     <div id="related-links-modal" class="absolute inset-0 z-[1350] hidden items-center justify-center bg-slate-950/50 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200" role="dialog" aria-modal="true" aria-labelledby="related-links-title">
@@ -463,7 +507,7 @@
     const TAIPEI_101 = [25.0336, 121.5648];
     const FALLBACK_ZOOM = 16;
     const TAIWAN_BOUNDS = [[21.5, 119.0], [26.0, 122.5]];
-    const BUS_REFRESH_INTERVAL_MS = 5_000;
+    const BUS_REFRESH_INTERVAL_MS = 12_000;
     const SLOW_TRANSPORT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
     const state = {
       config: null,
@@ -512,6 +556,7 @@
       notificationSnapshots: {},
       lastSafetyNotificationCheck: 0,
       lastFavoriteRefreshAt: 0,
+      adminAuthenticated: false,
       savedPlaces: [],
       selectedBusStop: null,
       selectedBikeStation: null,
@@ -537,6 +582,23 @@
       menuButton: document.getElementById('menu-button'),
       relatedLinksButton: document.getElementById('related-links-button'),
       relatedLinksModal: document.getElementById('related-links-modal'),
+      adminButton: document.getElementById('admin-button'),
+      adminModal: document.getElementById('admin-modal'),
+      adminCard: document.getElementById('admin-card'),
+      closeAdminButton: document.getElementById('close-admin-button'),
+      adminLoginForm: document.getElementById('admin-login-form'),
+      adminUsername: document.getElementById('admin-username'),
+      adminPassword: document.getElementById('admin-password'),
+      adminLoginButton: document.getElementById('admin-login-button'),
+      adminPanel: document.getElementById('admin-panel'),
+      adminTdxToggle: document.getElementById('admin-tdx-toggle'),
+      adminTdxState: document.getElementById('admin-tdx-state'),
+      adminCredentials: document.getElementById('admin-credentials'),
+      adminCacheCount: document.getElementById('admin-cache-count'),
+      adminScope: document.getElementById('admin-scope'),
+      adminRefreshButton: document.getElementById('admin-refresh-button'),
+      adminLogoutButton: document.getElementById('admin-logout-button'),
+      adminMessage: document.getElementById('admin-message'),
       relatedLinksCard: document.getElementById('related-links-card'),
       closeRelatedLinksButton: document.getElementById('close-related-links-button'),
       mapSearchForm: document.getElementById('map-search-form'),
@@ -634,8 +696,8 @@
       state.busVehicleLayer = busVehicleLayer;
       state.busStopLayer = busStopLayer;
       state.transportLayers = {
-        traffic: L.layerGroup().addTo(state.map),
-        bus: L.layerGroup([busStopLayer, busVehicleLayer]).addTo(state.map),
+        traffic: L.layerGroup(),
+        bus: L.layerGroup([busStopLayer, busVehicleLayer]),
         bike: L.markerClusterGroup({
           chunkedLoading: true,
           chunkInterval: 40,
@@ -655,9 +717,9 @@
           animate: false,
           animateAddingMarkers: false,
           disableClusteringAtZoom: 17,
-          maxClusterRadius: 70,
+          maxClusterRadius: (zoom) => Math.min(260, Math.max(45, 45 + Math.max(0, 15 - zoom) * 22)),
           iconCreateFunction: createParkingClusterIcon
-        }).addTo(state.map)
+        })
       };
       state.trafficRenderer = L.canvas({ padding: 0.5 });
       state.savedPlaceLayer = L.layerGroup().addTo(state.map);
@@ -984,6 +1046,12 @@
         button.setAttribute('aria-label', `${button.dataset.label}，目前隱藏，點擊切換`);
         return;
       }
+      if (layerKey === 'bike' && state.map.hasLayer(state.transportLayers.parking)) {
+        setTransportLayerVisibility('parking', false);
+      }
+      if (layerKey === 'parking' && state.map.hasLayer(state.transportLayers.bike)) {
+        setTransportLayerVisibility('bike', false);
+      }
       state.map.addLayer(layer);
       button.setAttribute('aria-pressed', 'true');
       button.setAttribute('aria-label', `${button.dataset.label}，目前顯示，點擊切換`);
@@ -1017,12 +1085,13 @@
         L.DomEvent.disableScrollPropagation(container);
         definitions.forEach((definition) => {
           const button = L.DomUtil.create('button', 'transport-layer-toggle', container);
+          const visible = state.map.hasLayer(state.transportLayers[definition.key]);
           button.type = 'button';
           button.dataset.label = definition.label;
-          button.dataset.loading = 'true';
-          button.setAttribute('aria-busy', 'true');
-          button.setAttribute('aria-pressed', 'true');
-          button.setAttribute('aria-label', `${definition.label}，目前顯示，點擊切換`);
+          button.dataset.loading = visible ? 'true' : 'false';
+          button.setAttribute('aria-busy', String(visible));
+          button.setAttribute('aria-pressed', String(visible));
+          button.setAttribute('aria-label', `${definition.label}，目前${visible ? '顯示' : '隱藏'}，點擊切換`);
           button.innerHTML = `${definition.icon}<span>${definition.label}</span><span class="transport-layer-state" aria-live="polite"></span>`;
           L.DomEvent.on(button, 'click', (event) => {
             L.DomEvent.stop(event);
@@ -1051,11 +1120,12 @@
 
     function createParkingClusterIcon(cluster) {
       const count = cluster.getChildCount();
-      const size = Math.round(Math.min(76, 38 + Math.log10(count + 1) * 10));
-      const fontSize = Math.round(Math.min(22, 13 + Math.log10(count + 1) * 2));
+      const zoom = state.map?.getZoom() || 10;
+      const size = Math.round(Math.min(86, 40 + Math.max(0, 16 - zoom) * 3 + Math.log10(count + 1) * 8));
+      const fontSize = Math.round(Math.min(24, 12 + Math.max(0, 15 - zoom) * 0.8 + Math.log10(count + 1) * 2));
       return L.divIcon({
         className: 'parking-cluster',
-        html: `<div class="parking-cluster-symbol" style="width:${size}px;height:${size}px;font-size:${fontSize}px">${count}<span>P</span></div>`,
+        html: `<div class="parking-cluster-symbol" style="width:${size}px;height:${size}px;font-size:${fontSize}px">${count}<span>場</span></div>`,
         iconSize: [size, size],
         iconAnchor: [size / 2, size / 2]
       });
@@ -1111,7 +1181,7 @@
         console.error('讀取收藏位置失敗：', error);
       }
       localStorage.setItem('smart-life-refresh-seconds', '5');
-      elements.refreshIntervalSelect.value = '5';
+      elements.refreshIntervalSelect.value = '12';
       elements.refreshIntervalSelect.disabled = true;
       renderSavedPlaces();
       schedulePeriodicUpdates();
@@ -2163,6 +2233,145 @@
       elements.infoContent.replaceChildren(introduction, folders, disclaimer);
     }
 
+    function showAdminMessage(message, type = 'error') {
+      if (!elements.adminMessage) return;
+      if (!message) {
+        elements.adminMessage.classList.add('hidden');
+        elements.adminMessage.textContent = '';
+        return;
+      }
+      elements.adminMessage.textContent = message;
+      elements.adminMessage.className = type === 'success'
+        ? 'mt-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800'
+        : 'mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800';
+    }
+
+    function showAdminLogin() {
+      state.adminAuthenticated = false;
+      elements.adminLoginForm.classList.remove('hidden');
+      elements.adminPanel.classList.add('hidden');
+      elements.adminTdxToggle.disabled = false;
+    }
+
+    function renderAdminStatus(payload) {
+      state.adminAuthenticated = true;
+      elements.adminLoginForm.classList.add('hidden');
+      elements.adminPanel.classList.remove('hidden');
+      elements.adminTdxToggle.checked = payload.tdxFetchingEnabled === true;
+      elements.adminTdxToggle.disabled = false;
+      elements.adminTdxState.textContent = payload.tdxFetchingEnabled ? '目前允許伺服器連線' : '目前已停止新連線';
+      elements.adminCredentials.textContent = `${payload.tdxAvailableCredentialCount} / ${payload.tdxCredentialCount}`;
+      elements.adminCacheCount.textContent = String(payload.cachedTdxQueries ?? 0);
+      elements.adminScope.textContent = payload.acquisitionScope?.nationwideSingleRequestAvailable
+        ? 'TDX 提供全臺單次資料端點。'
+        : 'TDX 市區資料僅提供縣市端點；伺服器每縣市取得完整資料後共用快取，不會依地圖區塊重複請求。';
+      showAdminMessage('');
+    }
+
+    async function loadAdminStatus() {
+      const response = await fetch(new URL('/api/admin/status', API_BASE_URL), {
+        headers: { Accept: 'application/json' }, credentials: 'same-origin'
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        showAdminLogin();
+        return false;
+      }
+      if (!response.ok || !payload.success) throw new Error(payload.message || `HTTP ${response.status}`);
+      renderAdminStatus(payload);
+      return true;
+    }
+
+    async function openAdminModal() {
+      closeMenu();
+      elements.adminButton.setAttribute('aria-expanded', 'true');
+      elements.adminModal.classList.remove('hidden');
+      elements.adminModal.classList.add('flex');
+      window.requestAnimationFrame(() => {
+        elements.adminModal.classList.remove('opacity-0');
+        elements.adminCard.classList.remove('translate-y-3');
+      });
+      showAdminMessage('');
+      try {
+        const authenticated = await loadAdminStatus();
+        if (!authenticated) elements.adminUsername.focus();
+      } catch (error) {
+        showAdminLogin();
+        showAdminMessage(error.message);
+      }
+    }
+
+    function closeAdminModal() {
+      elements.adminButton.setAttribute('aria-expanded', 'false');
+      elements.adminModal.classList.add('opacity-0');
+      elements.adminCard.classList.add('translate-y-3');
+      elements.adminPassword.value = '';
+      window.setTimeout(() => {
+        elements.adminModal.classList.add('hidden');
+        elements.adminModal.classList.remove('flex');
+      }, 200);
+    }
+
+    async function submitAdminLogin(event) {
+      event.preventDefault();
+      elements.adminLoginButton.disabled = true;
+      showAdminMessage('');
+      try {
+        const response = await fetch(new URL('/api/admin/login', API_BASE_URL), {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ username: elements.adminUsername.value, password: elements.adminPassword.value })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) throw new Error(payload.message || `HTTP ${response.status}`);
+        elements.adminPassword.value = '';
+        renderAdminStatus(payload);
+      } catch (error) {
+        showAdminLogin();
+        showAdminMessage(error.message);
+      } finally {
+        elements.adminLoginButton.disabled = false;
+      }
+    }
+
+    async function updateAdminTdxSetting() {
+      const enabled = elements.adminTdxToggle.checked;
+      elements.adminTdxToggle.disabled = true;
+      try {
+        const response = await fetch(new URL('/api/admin/tdx', API_BASE_URL), {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          showAdminLogin();
+          throw new Error(payload.message || '請重新登入');
+        }
+        if (!response.ok || !payload.success) throw new Error(payload.message || `HTTP ${response.status}`);
+        renderAdminStatus(payload);
+        showAdminMessage(enabled ? 'TDX 資料取得已啟用' : 'TDX 資料取得已停用', 'success');
+      } catch (error) {
+        elements.adminTdxToggle.checked = !enabled;
+        showAdminMessage(error.message);
+      } finally {
+        elements.adminTdxToggle.disabled = false;
+      }
+    }
+
+    async function logoutAdmin() {
+      try {
+        await fetch(new URL('/api/admin/logout', API_BASE_URL), {
+          method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }
+        });
+      } finally {
+        showAdminLogin();
+        elements.adminUsername.focus();
+      }
+    }
+
     function openInfoPanel() {
       elements.infoPanel.classList.remove('translate-y-full', 'md:translate-x-[calc(100%+2rem)]');
     }
@@ -2527,6 +2736,17 @@
       bindEventListener(elements.refreshIntervalSelect, 'change', schedulePeriodicUpdates, '#refresh-interval-select');
       bindEventListener(elements.menuButton, 'click', openMenu, '#menu-button');
       bindEventListener(elements.relatedLinksButton, 'click', openRelatedLinks, '#related-links-button');
+      bindEventListener(elements.adminButton, 'click', openAdminModal, '#admin-button');
+      bindEventListener(elements.closeAdminButton, 'click', closeAdminModal, '#close-admin-button');
+      bindEventListener(elements.adminModal, 'click', (event) => {
+        if (event.target === elements.adminModal) closeAdminModal();
+      }, '#admin-modal');
+      bindEventListener(elements.adminLoginForm, 'submit', submitAdminLogin, '#admin-login-form');
+      bindEventListener(elements.adminTdxToggle, 'change', updateAdminTdxSetting, '#admin-tdx-toggle');
+      bindEventListener(elements.adminRefreshButton, 'click', () => {
+        loadAdminStatus().catch((error) => showAdminMessage(error.message));
+      }, '#admin-refresh-button');
+      bindEventListener(elements.adminLogoutButton, 'click', logoutAdmin, '#admin-logout-button');
       bindEventListener(elements.closeRelatedLinksButton, 'click', closeRelatedLinks, '#close-related-links-button');
       bindEventListener(elements.relatedLinksModal, 'click', (event) => {
         if (event.target === elements.relatedLinksModal) closeRelatedLinks();
@@ -2558,7 +2778,8 @@
       }, '#category-modal');
       bindEventListener(document, 'keydown', (event) => {
         if (event.key !== 'Escape') return;
-        if (!elements.relatedLinksModal?.classList.contains('hidden')) closeRelatedLinks();
+        if (!elements.adminModal?.classList.contains('hidden')) closeAdminModal();
+        else if (!elements.relatedLinksModal?.classList.contains('hidden')) closeRelatedLinks();
         else if (!elements.mapSearchResults?.classList.contains('hidden')) closeMapSearchResults();
         else if (!elements.categoryModal?.classList.contains('hidden')) closeCategoryModal();
         else if (!elements.serviceDrawer?.classList.contains('-translate-x-full')) closeMenu();

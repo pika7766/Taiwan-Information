@@ -25,6 +25,12 @@
 - 顯示 TDX 路外停車場、剩餘車位、總車位、地址、費率與營運狀態。
 - 公車站牌與 YouBike 站點可收藏，並可使用瀏覽器通知追蹤交通狀態。
 
+### 管理員控制
+
+- 服務選單提供管理員登入，預設帳號為 `admin`、密碼為 `7766`。
+- 登入狀態使用伺服器端 session 與 HttpOnly Cookie，不會將密碼或 session 寫入瀏覽器儲存空間。
+- 管理員可即時啟用或停用所有新的 TDX token、資料請求與背景更新；停用期間仍保留既有伺服器快取。
+
 ### 生活與公共資訊
 
 - 串接中央氣象署開放資料，顯示所在地天氣資訊。
@@ -64,6 +70,8 @@
 6. TDX 單組憑證遇到 `429` 時依設定順序切換，只有全部憑證都被限流才進入「請求過多」錯誤或快取降級狀態。
 7. 外部服務失敗時保留既有快取，讓地圖與其他功能仍可繼續使用。
 
+TDX 官方 Swagger 顯示，市區公車、YouBike、縣市路況與縣市停車場只提供 `City/{City}` 端點，沒有全臺單一請求端點。系統因此採用「每縣市一次取得完整資料、伺服器共享快取」；同一縣市不會因使用者數量或地圖移動重複請求。若固定掃描 22 縣市，單次週期反而會產生上百次 TDX 請求，因此不採用全臺強制預抓。全臺公車動態則維持既有的伺服器彙整快照。
+
 ## 資料來源與限制
 
 - 公車、YouBike、停車場與道路即時資料由 TDX 提供，實際更新速度與完整度受 TDX 方案額度及來源品質影響。
@@ -91,21 +99,25 @@
 | 環境變數 | 必要 | 用途 |
 | --- | --- | --- |
 | `CWA_API_KEY` | 是 | 中央氣象署 API 憑證 |
+| `ADMIN_USERNAME` | 否 | 管理員帳號，預設 `admin` |
+| `ADMIN_PASSWORD` | 否 | 管理員密碼，預設 `7766`；正式環境建議覆寫 |
+| `TDX_FETCH_ENABLED` | 否 | 服務啟動時是否允許取得 TDX，預設 `true` |
 | `TDX_CLIENT_ID` | 是 | 第一組 TDX OAuth 用戶端 ID |
 | `TDX_CLIENT_SECRET` | 是 | 第一組 TDX OAuth 用戶端密鑰 |
 | `TDX_CLIENT_ID_2`、`TDX_CLIENT_SECRET_2` | 否 | 第二組 TDX 憑證 |
 | `TDX_CLIENT_ID_3`、`TDX_CLIENT_SECRET_3` | 否 | 第三組 TDX 憑證 |
 | `TDX_CLIENT_ID_4`、`TDX_CLIENT_SECRET_4` | 否 | 第四組 TDX 憑證 |
-| `TDX_CLIENT_ID_5`、`TDX_CLIENT_SECRET_5` | 否 | 第五組 TDX 憑證；也可繼續增加編號 |
+| `TDX_CLIENT_ID_5`～`TDX_CLIENT_ID_8` 及對應的 `TDX_CLIENT_SECRET_5`～`TDX_CLIENT_SECRET_8` | 否 | 第五至第八組 TDX 憑證；也可繼續增加編號 |
 | `TDX_CREDENTIALS_JSON` | 否 | 多組憑證 JSON 陣列或物件，欄位使用 `clientId` 與 `clientSecret` |
-| `TDX_REFRESH_INTERVAL_MS` | 否 | 公車動態與背景排程間隔，預設 `5000` 毫秒 |
+| `BUS_REFRESH_INTERVAL_MS` | 否 | 公車動態快照更新間隔，預設 `12000` 毫秒 |
+| `TDX_REFRESH_INTERVAL_MS` | 否 | TDX 共用快取背景排程間隔，預設 `5000` 毫秒 |
 | `TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS` | 否 | 路況、YouBike 與停車場更新間隔，預設 `300000` 毫秒 |
 | `CWA_DATASET_IDS` | 否 | CWA 備援資料集 ID，以逗號分隔 |
 | `BUS_REALTIME_CACHE_FILE` | 否 | 全臺公車快照儲存路徑 |
 
 Render 會自動提供 `PORT`，伺服器已監聽 `0.0.0.0`，不需要手動指定連接埠。若使用 Render Persistent Disk，建議掛載至 `/var/data`，並設定 `BUS_REALTIME_CACHE_FILE=/var/data/bus_realtime_cache.json`。
 
-五組 TDX 帳號請在 Render 的 Environment 頁面分別新增以下 Key；Value 填入各組實際帳號與密鑰：
+八組 TDX 帳號請在 Render 的 Environment 頁面分別新增以下 Key；Value 填入各組實際帳號與密鑰：
 
 ```text
 TDX_CLIENT_ID
@@ -118,13 +130,23 @@ TDX_CLIENT_ID_4
 TDX_CLIENT_SECRET_4
 TDX_CLIENT_ID_5
 TDX_CLIENT_SECRET_5
+TDX_CLIENT_ID_6
+TDX_CLIENT_SECRET_6
+TDX_CLIENT_ID_7
+TDX_CLIENT_SECRET_7
+TDX_CLIENT_ID_8
+TDX_CLIENT_SECRET_8
 ```
 
-更新間隔已有正確預設值；除非要覆寫，不必在 Render 設定 `TDX_REFRESH_INTERVAL_MS` 或 `TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS`。
+更新間隔已有正確預設值；除非要覆寫，不必在 Render 設定 `BUS_REFRESH_INTERVAL_MS`、`TDX_REFRESH_INTERVAL_MS` 或 `TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS`。
 
 ## API 與安全性
 
 - `GET /api/status`：檢查服務及環境變數設定狀態，不回傳憑證內容。
+- `POST /api/admin/login`：建立管理員 session。
+- `GET /api/admin/status`：取得 TDX 開關、可用憑證與快取狀態，需管理員 session。
+- `POST /api/admin/tdx`：以 `{ "enabled": true|false }` 控制 TDX 資料取得，需管理員 session。
+- `POST /api/admin/logout`：登出並清除管理員 session。
 - `GET /api/tdx/bus?scope=all`：取得目前已儲存的全臺公車快照。
 - `GET /api/tdx/parking?lat=25.033&lng=121.5654&city=Taipei&radius=5000`：取得附近停車場與剩餘車位。
 - `/api/status` 只回傳 TDX 憑證總數及目前可用組數，不會回傳帳號、密鑰或 token。
