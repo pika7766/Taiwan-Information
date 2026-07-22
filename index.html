@@ -709,6 +709,7 @@
       trafficRenderer: null,
       lastTrafficRoads: [],
       mapClickSequence: 0,
+      mapClickSuppressedUntil: 0,
       notificationTimer: null,
       publicStatusTimer: null,
       publicTdxFetchingEnabled: null,
@@ -2202,6 +2203,8 @@
     }
     // 點擊地圖後先辨識行政區，再將地方報導依主題資料夾完整展開。
     async function handleMapClick(event) {
+      if (Date.now() < state.mapClickSuppressedUntil
+        || !elements.tutorialModal.classList.contains('hidden')) return;
       const { lat, lng } = event.latlng;
       state.busDetailSequence += 1;
       state.busRouteLayer?.clearLayers();
@@ -2886,7 +2889,14 @@
       elements.relatedLinksButton.focus();
     }
 
-    function openTutorial() {
+    function suppressMapClickThrough(durationMs = 700) {
+      state.mapClickSuppressedUntil = Math.max(state.mapClickSuppressedUntil, Date.now() + durationMs);
+    }
+
+    function openTutorial(event) {
+      event?.preventDefault();
+      event?.stopPropagation();
+      suppressMapClickThrough();
       elements.tutorialModal.classList.remove('hidden');
       elements.tutorialModal.classList.add('flex');
       elements.tutorialContent.scrollTop = 0;
@@ -2898,7 +2908,10 @@
       elements.closeTutorialButton.focus();
     }
 
-    function closeTutorial() {
+    function closeTutorial(event) {
+      event?.preventDefault();
+      event?.stopPropagation();
+      suppressMapClickThrough();
       elements.tutorialModal.classList.add('opacity-0');
       elements.tutorialCard.classList.add('translate-y-3');
       elements.tutorialButton.setAttribute('aria-expanded', 'false');
@@ -3274,12 +3287,29 @@
       }, '#related-links-modal');
       bindEventListener(elements.closeTutorialButton, 'click', closeTutorial, '#close-tutorial-button');
       bindEventListener(elements.tutorialModal, 'click', (event) => {
-        if (event.target === elements.tutorialModal) closeTutorial();
+        event.stopPropagation();
+        suppressMapClickThrough();
+        if (event.target === elements.tutorialModal) closeTutorial(event);
       }, '#tutorial-modal');
+      ['dblclick', 'contextmenu', 'wheel'].forEach((eventName) => {
+        bindEventListener(elements.tutorialModal, eventName, (event) => {
+          event.stopPropagation();
+          suppressMapClickThrough();
+        }, `#tutorial-modal ${eventName}`);
+      });
       document.querySelectorAll('#tutorial-content a[href^="#tutorial-"]').forEach((link) => {
         bindEventListener(link, 'click', (event) => {
           event.preventDefault();
-          document.querySelector(link.getAttribute('href'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          event.stopPropagation();
+          suppressMapClickThrough();
+          const section = document.querySelector(link.getAttribute('href'));
+          if (!section) return;
+          const contentBounds = elements.tutorialContent.getBoundingClientRect();
+          const sectionBounds = section.getBoundingClientRect();
+          const navigationHeight = elements.tutorialContent.querySelector('nav')?.offsetHeight || 0;
+          const targetScrollTop = elements.tutorialContent.scrollTop
+            + sectionBounds.top - contentBounds.top - navigationHeight;
+          elements.tutorialContent.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' });
         }, `教學目錄 ${link.getAttribute('href')}`);
       });
       bindEventListener(elements.mapSearchForm, 'submit', searchMapLocation, '#map-search-form');
