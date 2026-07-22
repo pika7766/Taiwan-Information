@@ -577,7 +577,7 @@
     const API_BASE_URL = window.location.origin;
     const TAIPEI_101 = [25.0336, 121.5648];
     const FALLBACK_ZOOM = 16;
-    const TAIWAN_BOUNDS = [[21.5, 119.0], [26.0, 122.5]];
+    const TAIWAN_BOUNDS = [[21.5, 118.0], [26.5, 122.5]];
     const GEOLOCATION_FALLBACK_DELAY_MS = 10_000;
     const BUS_REFRESH_INTERVAL_MS = 12_000;
     const SLOW_TRANSPORT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -951,6 +951,7 @@
     // 使用瀏覽器定位；部署環境必須使用 HTTPS 才能穩定取得權限。
     function requestUserLocation() {
       const requestSequence = ++state.locationRequestSequence;
+      const requestStartedAt = Date.now();
       state.locationResolved = false;
       window.clearTimeout(state.locationFallbackTimer);
       window.clearTimeout(state.transportRefreshTimer);
@@ -964,21 +965,49 @@
       }, GEOLOCATION_FALLBACK_DELAY_MS);
 
       if (!navigator.geolocation) {
-        fallbackReason = '此瀏覽器不支援定位';
+        useFallbackLocation('此瀏覽器不支援定位');
+        return;
+      }
+      if (!window.isSecureContext) {
+        useFallbackLocation('瀏覽器只允許在 HTTPS 網站使用定位');
         return;
       }
 
+      const useResolvedPosition = ({ coords }) => {
+        if (requestSequence !== state.locationRequestSequence || state.locationResolved) return;
+        if (!Number.isFinite(coords?.latitude) || !Number.isFinite(coords?.longitude)) {
+          fallbackReason = '定位服務回傳的座標無效';
+          return;
+        }
+        window.clearTimeout(state.locationFallbackTimer);
+        useUserLocation(coords.latitude, coords.longitude, coords.accuracy);
+      };
+      const handleLocationError = (error, allowHighAccuracyRetry) => {
+        if (requestSequence !== state.locationRequestSequence || state.locationResolved) return;
+        fallbackReason = getGeolocationErrorMessage(error);
+        if (error.code === error.PERMISSION_DENIED) {
+          useFallbackLocation(fallbackReason);
+          return;
+        }
+        const remainingTime = GEOLOCATION_FALLBACK_DELAY_MS - (Date.now() - requestStartedAt);
+        if (allowHighAccuracyRetry && remainingTime > 750) {
+          navigator.geolocation.getCurrentPosition(
+            useResolvedPosition,
+            (retryError) => handleLocationError(retryError, false),
+            { enableHighAccuracy: true, timeout: Math.max(500, remainingTime), maximumAge: 0 }
+          );
+        }
+      };
+
+      // 先接受快取或網路定位；失敗時才在總計 10 秒內改用高精度 GPS。
       navigator.geolocation.getCurrentPosition(
-        ({ coords }) => {
-          if (requestSequence !== state.locationRequestSequence || state.locationResolved) return;
-          window.clearTimeout(state.locationFallbackTimer);
-          useUserLocation(coords.latitude, coords.longitude, coords.accuracy);
-        },
-        (error) => {
-          if (requestSequence !== state.locationRequestSequence || state.locationResolved) return;
-          fallbackReason = getGeolocationErrorMessage(error);
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+        useResolvedPosition,
+        (error) => handleLocationError(error, true),
+        {
+          enableHighAccuracy: false,
+          timeout: Math.min(5_000, GEOLOCATION_FALLBACK_DELAY_MS - 500),
+          maximumAge: 5 * 60 * 1000
+        }
       );
     }
 
@@ -994,7 +1023,9 @@
       state.usingFallback = false;
       state.locationResolved = true;
       elements.locateButton.disabled = false;
-      elements.locationStatus.textContent = `定位完成，誤差約 ${Math.round(accuracy)} 公尺`;
+      elements.locationStatus.textContent = Number.isFinite(accuracy)
+        ? `定位完成，誤差約 ${Math.round(accuracy)} 公尺`
+        : '定位完成';
 
       if (state.map) {
         if (state.fallbackMarker) {
@@ -1665,7 +1696,9 @@
       const lat = Number(params.get('lat'));
       const lng = Number(params.get('lng'));
       const zoom = Math.min(19, Math.max(7, Number(params.get('zoom')) || FALLBACK_ZOOM));
-      if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= 21.5 && lat <= 26 && lng >= 119 && lng <= 122.5) {
+      if (Number.isFinite(lat) && Number.isFinite(lng)
+        && lat >= TAIWAN_BOUNDS[0][0] && lat <= TAIWAN_BOUNDS[1][0]
+        && lng >= TAIWAN_BOUNDS[0][1] && lng <= TAIWAN_BOUNDS[1][1]) {
         setMapView([lat, lng], zoom, { animate: false });
       }
       const selectedLat = Number(params.get('selectedLat'));

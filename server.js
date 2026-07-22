@@ -56,6 +56,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT) || 4174;
 const LOCAL_ORIGIN = `http://127.0.0.1:${PORT}`;
 const REQUEST_BASE_ORIGIN = 'http://localhost';
+const TAIWAN_BOUNDS = Object.freeze({ south: 21.5, west: 118.0, north: 26.5, east: 122.5 });
 const DATA_GOV_ENDPOINT = 'https://data.gov.tw/api/front/dataset/list';
 const CWA_DATASTORE_ROOT = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore';
 const CWA_DATASET_IDS = (process.env.CWA_DATASET_IDS || 'F-D0047-093,F-D0047-091')
@@ -522,7 +523,8 @@ function requireTaiwanCoordinates(searchParams) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     throw new UpstreamError('lat and lng must be valid numbers', 400);
   }
-  if (lat < 21.5 || lat > 26 || lng < 119 || lng > 122.5) {
+  if (lat < TAIWAN_BOUNDS.south || lat > TAIWAN_BOUNDS.north
+    || lng < TAIWAN_BOUNDS.west || lng > TAIWAN_BOUNDS.east) {
     throw new UpstreamError('Coordinates are outside the configured Taiwan map bounds', 400);
   }
   return { lat, lng };
@@ -861,7 +863,8 @@ async function proxyGeocodeSearch(requestUrl, response) {
     } else {
       const endpoint = new URL(NOMINATIM_SEARCH_ENDPOINT);
       endpoint.search = new URLSearchParams({
-        format: 'jsonv2', q: query, countrycodes: 'tw', viewbox: '119,26,122.5,21.5',
+        format: 'jsonv2', q: query, countrycodes: 'tw',
+        viewbox: `${TAIWAN_BOUNDS.west},${TAIWAN_BOUNDS.north},${TAIWAN_BOUNDS.east},${TAIWAN_BOUNDS.south}`,
         bounded: '1', addressdetails: '1', limit: '8', 'accept-language': 'zh-TW'
       });
       payload = await fetchJson(endpoint, {
@@ -889,7 +892,8 @@ async function proxyGeocodeSearch(requestUrl, response) {
         lng
       };
     }).filter((place) => Number.isFinite(place.lat) && Number.isFinite(place.lng)
-      && place.lat >= 21.5 && place.lat <= 26 && place.lng >= 119 && place.lng <= 122.5);
+      && place.lat >= TAIWAN_BOUNDS.south && place.lat <= TAIWAN_BOUNDS.north
+      && place.lng >= TAIWAN_BOUNDS.west && place.lng <= TAIWAN_BOUNDS.east);
 
     sendJson(response, 200, {
       success: true,
@@ -1706,7 +1710,8 @@ async function proxyRoadNetwork(requestUrl, response) {
     const east = Number(requestUrl.searchParams.get('east'));
     const zoom = Number(requestUrl.searchParams.get('zoom'));
     if (![south, west, north, east].every(Number.isFinite)
-      || south < 21.5 || north > 26 || west < 119 || east > 122.5
+      || south < TAIWAN_BOUNDS.south || north > TAIWAN_BOUNDS.north
+      || west < TAIWAN_BOUNDS.west || east > TAIWAN_BOUNDS.east
       || south >= north || west >= east) {
       throw new UpstreamError('Valid Taiwan viewport bounds are required', 400);
     }
