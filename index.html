@@ -84,7 +84,7 @@
     .topic-folder > summary::-webkit-details-marker { display: none; }
     .topic-folder[open] .folder-chevron { transform: rotate(180deg); }
     .topic-folder[open] .folder-content { border-top-color: #e2e8f0; }
-    .transport-bus-icon, .transport-bike-icon { background: transparent; border: 0; }
+    .transport-bus-icon, .transport-bike-icon, .transport-parking-icon { background: transparent; border: 0; }
     .transport-bus-symbol {
       display: grid; width: 34px; height: 34px; place-items: center; border: 3px solid white; border-radius: 7px;
       background: #0f766e; color: white; font-size: 19px; line-height: 1; box-shadow: 0 4px 12px rgba(15, 23, 42, .35);
@@ -93,12 +93,22 @@
       display: grid; width: 34px; height: 34px; place-items: center; border: 3px solid white; border-radius: 999px;
       background: #0369a1; color: white; font-size: 18px; line-height: 1; box-shadow: 0 4px 12px rgba(15, 23, 42, .35);
     }
+    .transport-parking-symbol {
+      display: grid; width: 34px; height: 34px; place-items: center; border: 3px solid white; border-radius: 6px;
+      background: #374151; color: white; font-size: 20px; font-weight: 900; line-height: 1; box-shadow: 0 4px 12px rgba(15, 23, 42, .35);
+    }
     .bike-cluster { background: transparent; border: 0; }
     .bike-cluster-symbol {
       display: grid; place-items: center; border: 4px solid rgba(255, 255, 255, .92); border-radius: 999px;
       background: #0369a1; color: white; font-weight: 850; line-height: 1; box-shadow: 0 5px 16px rgba(15, 23, 42, .38);
     }
     .bike-cluster-symbol span { display: block; font-size: 11px; font-weight: 700; }
+    .parking-cluster { background: transparent; border: 0; }
+    .parking-cluster-symbol {
+      display: grid; place-items: center; border: 4px solid rgba(255, 255, 255, .92); border-radius: 6px;
+      background: #374151; color: white; font-weight: 850; line-height: 1; box-shadow: 0 5px 16px rgba(15, 23, 42, .38);
+    }
+    .parking-cluster-symbol span { display: block; font-size: 11px; font-weight: 800; }
     .transport-layer-control {
       display: grid; gap: 5px; width: 188px; padding: 8px; border: 1px solid rgba(15, 23, 42, .16);
       border-radius: 6px; background: rgba(255, 255, 255, .96); box-shadow: 0 2px 10px rgba(15, 23, 42, .2);
@@ -454,7 +464,7 @@
     const FALLBACK_ZOOM = 16;
     const TAIWAN_BOUNDS = [[21.5, 119.0], [26.0, 122.5]];
     const BUS_REFRESH_INTERVAL_MS = 5_000;
-    const TRAFFIC_BIKE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+    const SLOW_TRANSPORT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
     const state = {
       config: null,
       selectedCityCode: null,
@@ -479,17 +489,18 @@
       transportRetryCount: 0,
       selectedTransportLocation: null,
       loadedBikeCityCode: null,
+      loadedParkingCityCode: null,
       loadedBusStopCityCode: null,
       lastRoadPayload: null,
       lastTrafficPayload: null,
-      lastTransportFetch: { roads: null, traffic: null, bike: null },
-      nextTrafficBikeRefreshAt: Date.now() + TRAFFIC_BIKE_REFRESH_INTERVAL_MS,
+      lastTransportFetch: { roads: null, traffic: null, bike: null, parking: null },
+      nextSlowTransportRefreshAt: Date.now() + SLOW_TRANSPORT_REFRESH_INTERVAL_MS,
       transportLayers: null,
       busVehicleLayer: null,
       busStopLayer: null,
       transportLayerControl: null,
       transportLayerButtons: {},
-      transportLoadingSequence: { traffic: 0, bus: 0, bike: 0 },
+      transportLoadingSequence: { traffic: 0, bus: 0, bike: 0, parking: 0 },
       transportHasInitialized: false,
       loadedTransportCityCode: null,
       trafficRenderer: null,
@@ -635,6 +646,17 @@
           disableClusteringAtZoom: 17,
           maxClusterRadius: (zoom) => Math.min(260, Math.max(45, 45 + Math.max(0, 15 - zoom) * 22)),
           iconCreateFunction: createBikeClusterIcon
+        }).addTo(state.map),
+        parking: L.markerClusterGroup({
+          chunkedLoading: true,
+          chunkInterval: 40,
+          chunkDelay: 15,
+          removeOutsideVisibleBounds: true,
+          animate: false,
+          animateAddingMarkers: false,
+          disableClusteringAtZoom: 17,
+          maxClusterRadius: 70,
+          iconCreateFunction: createParkingClusterIcon
         }).addTo(state.map)
       };
       state.trafficRenderer = L.canvas({ padding: 0.5 });
@@ -983,7 +1005,8 @@
           icon: '<span class="traffic-key" style="background:#16a34a"></span><span class="traffic-key" style="background:#eab308"></span><span class="traffic-key" style="background:#dc2626"></span>'
         },
         { key: 'bus', label: '公車動態', icon: '<span aria-hidden="true">🚌</span>' },
-        { key: 'bike', label: 'YouBike 站點', icon: '<span aria-hidden="true">🚲</span>' }
+        { key: 'bike', label: 'YouBike 站點', icon: '<span aria-hidden="true">🚲</span>' },
+        { key: 'parking', label: '停車場', icon: '<strong aria-hidden="true">P</strong>' }
       ];
       const control = L.control({ position: 'topleft' });
       control.onAdd = () => {
@@ -1021,6 +1044,18 @@
       return L.divIcon({
         className: 'bike-cluster',
         html: `<div class="bike-cluster-symbol" style="width:${size}px;height:${size}px;font-size:${fontSize}px">${count}<span>站</span></div>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2]
+      });
+    }
+
+    function createParkingClusterIcon(cluster) {
+      const count = cluster.getChildCount();
+      const size = Math.round(Math.min(76, 38 + Math.log10(count + 1) * 10));
+      const fontSize = Math.round(Math.min(22, 13 + Math.log10(count + 1) * 2));
+      return L.divIcon({
+        className: 'parking-cluster',
+        html: `<div class="parking-cluster-symbol" style="width:${size}px;height:${size}px;font-size:${fontSize}px">${count}<span>P</span></div>`,
         iconSize: [size, size],
         iconAnchor: [size / 2, size / 2]
       });
@@ -1413,9 +1448,9 @@
           if (selection) {
             const { center, cityCode } = selection;
             const layers = ['bus'];
-            if (Date.now() >= state.nextTrafficBikeRefreshAt) {
-              layers.push('traffic', 'bike');
-              state.nextTrafficBikeRefreshAt = Date.now() + TRAFFIC_BIKE_REFRESH_INTERVAL_MS;
+            if (Date.now() >= state.nextSlowTransportRefreshAt) {
+              layers.push('traffic', 'bike', 'parking');
+              state.nextSlowTransportRefreshAt = Date.now() + SLOW_TRANSPORT_REFRESH_INTERVAL_MS;
             }
             const updates = [refreshTransportLayers(center.lat, center.lng, cityCode, {
               layers,
@@ -1430,7 +1465,7 @@
         }
         schedulePeriodicUpdates();
       }, seconds * 1000);
-      if (elements.personalStatus) elements.personalStatus.textContent = `公車動態每 ${seconds} 秒更新；路況與 YouBike 每 5 分鐘更新。`;
+      if (elements.personalStatus) elements.personalStatus.textContent = `公車動態每 ${seconds} 秒更新；路況、YouBike 與停車場每 5 分鐘更新。`;
     }
 
     function renderBusLayer(payload) {
@@ -1500,6 +1535,49 @@
       state.loadedBikeCityCode = cityCode;
     }
 
+    function renderParkingLayer(payload, cityCode) {
+      const layer = state.transportLayers?.parking;
+      if (!layer) return;
+      layer.clearLayers();
+      const markers = [];
+      (payload.data || []).forEach((parkingLot) => {
+        if (!Number.isFinite(parkingLot.lat) || !Number.isFinite(parkingLot.lng)) return;
+        const availableSpaces = parkingLot.availableSpaces;
+        const hasAvailability = Number.isFinite(availableSpaces);
+        const markerColor = hasAvailability && availableSpaces <= 0 ? '#b91c1c' : '#374151';
+        const icon = L.divIcon({
+          className: 'transport-parking-icon',
+          html: `<span class="transport-parking-symbol" style="background:${markerColor}" aria-hidden="true">P</span>`,
+          iconSize: [34, 34], iconAnchor: [17, 17], popupAnchor: [0, -18]
+        });
+        const serviceStatus = parkingLot.serviceStatus === 1
+          ? '正常營運'
+          : parkingLot.serviceStatus === 0 || parkingLot.serviceStatus === 2
+            ? '暫停或停止營運'
+            : '狀態未提供';
+        const availabilityLabel = hasAvailability
+          ? `${availableSpaces} 格`
+          : '未提供即時資料';
+        const totalLabel = Number.isFinite(parkingLot.totalSpaces)
+          ? `${parkingLot.totalSpaces} 格`
+          : '未提供';
+        const popup = `<div class="transport-popup"><strong>${escapeHtml(parkingLot.parkingName)}</strong>
+          <p>剩餘車位：${escapeHtml(availabilityLabel)}</p>
+          <p>總車位：${escapeHtml(totalLabel)}</p>
+          <p>營運狀態：${escapeHtml(serviceStatus)}</p>
+          ${parkingLot.address ? `<p>地址：${escapeHtml(parkingLot.address)}</p>` : ''}
+          ${parkingLot.telephone ? `<p>電話：${escapeHtml(parkingLot.telephone)}</p>` : ''}
+          ${parkingLot.serviceTime ? `<p>服務時間：${escapeHtml(parkingLot.serviceTime)}</p>` : ''}
+          ${parkingLot.fareDescription ? `<p>費率：${escapeHtml(parkingLot.fareDescription)}</p>` : ''}
+          <p>更新時間：${escapeHtml(formatOfficialTime(parkingLot.updateTime))}</p></div>`;
+        markers.push(L.marker([parkingLot.lat, parkingLot.lng], {
+          icon, bubblingMouseEvents: false, zIndexOffset: 440
+        }).bindTooltip(parkingLot.parkingName, { direction: 'top', offset: [0, -17] }).bindPopup(popup));
+      });
+      layer.addLayers(markers);
+      state.loadedParkingCityCode = cityCode;
+    }
+
     function renderTrafficLayer(roadPayload, trafficPayload) {
       const layer = state.transportLayers?.traffic;
       if (!layer) return;
@@ -1537,7 +1615,7 @@
 
     async function refreshTransportLayers(lat, lng, cityCode, options = {}) {
       if (!state.locationResolved || !state.transportLayers || !cityCode || !state.map) return;
-      const requestedLayers = new Set(options.layers || ['traffic', 'bus', 'bike']);
+      const requestedLayers = new Set(options.layers || ['traffic', 'bus', 'bike', 'parking']);
       const force = options.force === true;
       const forceTdx = options.forceTdx === true;
       const isActive = (layerKey) => requestedLayers.has(layerKey)
@@ -1550,6 +1628,7 @@
       const roadRecord = state.lastTransportFetch.roads;
       const trafficRecord = state.lastTransportFetch.traffic;
       const bikeRecord = state.lastTransportFetch.bike;
+      const parkingRecord = state.lastTransportFetch.parking;
       const shouldLoadBus = isActive('bus');
       const shouldLoadBusStops = shouldLoadBus && state.loadedBusStopCityCode !== cityCode;
       const shouldLoadRoads = isActive('traffic') && (force || cityChanged || !state.lastRoadPayload
@@ -1560,10 +1639,15 @@
       const bikeDatasetKey = `CITY:${cityCode}`;
       const shouldLoadBike = isActive('bike') && (force || forceTdx || cityChanged || state.loadedBikeCityCode !== bikeDatasetKey
         || distanceFrom(bikeRecord) >= 8000 || now - (bikeRecord?.at || 0) >= 5 * 60 * 1000);
+      const parkingDatasetKey = `CITY:${cityCode}`;
+      const shouldLoadParking = isActive('parking') && (force || forceTdx || cityChanged
+        || state.loadedParkingCityCode !== parkingDatasetKey
+        || distanceFrom(parkingRecord) >= 8000 || now - (parkingRecord?.at || 0) >= 5 * 60 * 1000);
       const actualLoadingKeys = new Set(options.loadingKeys || []);
       if (shouldLoadBus) actualLoadingKeys.add('bus');
       if (shouldLoadRoads || shouldLoadTraffic) actualLoadingKeys.add('traffic');
       if (shouldLoadBike) actualLoadingKeys.add('bike');
+      if (shouldLoadParking) actualLoadingKeys.add('parking');
       const loadingSequences = { ...(options.loadingSequences || {}) };
       actualLoadingKeys.forEach((layerKey) => {
         if (!loadingSequences[layerKey]) loadingSequences[layerKey] = beginTransportLayerLoading(layerKey);
@@ -1572,7 +1656,7 @@
         if (actualLoadingKeys.has(layerKey)) finishTransportLayerLoading(layerKey, loadingSequences[layerKey]);
       };
 
-      if (!shouldLoadBus && !shouldLoadRoads && !shouldLoadTraffic && !shouldLoadBike) {
+      if (!shouldLoadBus && !shouldLoadRoads && !shouldLoadTraffic && !shouldLoadBike && !shouldLoadParking) {
         actualLoadingKeys.forEach((layerKey) => window.setTimeout(() => finishLoading(layerKey), 180));
         return;
       }
@@ -1584,11 +1668,13 @@
         if (state.busVehicleLayer && !state.transportLayers.bus.hasLayer(state.busVehicleLayer)) state.transportLayers.bus.addLayer(state.busVehicleLayer);
         if (state.busStopLayer && !state.transportLayers.bus.hasLayer(state.busStopLayer)) state.transportLayers.bus.addLayer(state.busStopLayer);
         state.transportLayers.traffic.clearLayers();
+        state.transportLayers.parking.clearLayers();
         state.busRouteLayer?.clearLayers();
         state.loadedTransportCityCode = cityCode;
         state.loadedBusStopCityCode = null;
         state.lastRoadPayload = null;
         state.lastTrafficPayload = null;
+        state.loadedParkingCityCode = null;
       }
       state.transportAbortController = new AbortController();
       const signal = state.transportAbortController.signal;
@@ -1607,6 +1693,7 @@
       let roadsRequest = null;
       let trafficRequest = null;
       let bikeRequest = null;
+      let parkingRequest = null;
 
       if (shouldLoadBus) {
         busRequest = fetchOfficialData('/api/tdx/bus', busParameters, signal);
@@ -1680,6 +1767,20 @@
         }).catch((error) => {
           if (error.name !== 'AbortError') console.error('TDX YouBike 圖層讀取失敗：', error);
         }).finally(() => finishLoading('bike'));
+      }
+
+      if (shouldLoadParking) {
+        parkingRequest = fetchOfficialData('/api/tdx/parking', {
+          lat, lng, city: cityCode, radius: Math.min(50000, Math.max(1000, viewportRadius))
+        }, signal);
+        tasks.push({ key: 'parking', promise: parkingRequest });
+        parkingRequest.then((payload) => {
+          if (signal.aborted) return;
+          renderParkingLayer(payload, parkingDatasetKey);
+          state.lastTransportFetch.parking = { lat, lng, at: Date.now() };
+        }).catch((error) => {
+          if (error.name !== 'AbortError') console.error('TDX 停車場圖層讀取失敗：', error);
+        }).finally(() => finishLoading('parking'));
       }
 
       const results = await Promise.allSettled(tasks.map((task) => task.promise));

@@ -356,7 +356,7 @@ function tdxCityUrl(pathname, city, parameters = {}) {
 }
 
 function tdxRefreshIntervalForUrl(url) {
-  return /\/v\d+\/(?:Bike|Road\/Traffic)\//.test(url.pathname)
+  return /\/v\d+\/(?:Bike|Parking|Road\/Traffic)\//.test(url.pathname)
     ? TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS
     : TDX_REFRESH_INTERVAL_MS;
 }
@@ -574,7 +574,8 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
 }
 
 function positionOf(item) {
-  const position = item.StopPosition || item.StationPosition || item.Position || item.LinkPosition || {};
+  const position = item.StopPosition || item.StationPosition || item.CarParkPosition
+    || item.ParkingPosition || item.Position || item.LinkPosition || {};
   return {
     lat: Number(position.PositionLat ?? position.Latitude),
     lng: Number(position.PositionLon ?? position.Longitude)
@@ -1366,6 +1367,100 @@ async function proxyBikeAll(requestUrl, response) {
   }
 }
 
+function finiteNumberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function parkingSpaceTotal(entries, field) {
+  if (!Array.isArray(entries) || !entries.length) return null;
+  const values = entries.map((entry) => finiteNumberOrNull(entry?.[field])).filter(Number.isFinite);
+  return values.length ? values.reduce((total, value) => total + value, 0) : null;
+}
+
+async function fetchParkingCityData(city, origin, radiusMeters) {
+  const parkingLotsPayload = await fetchTdxCity('v1/Parking/OffStreet/ParkingLot/City', city, {
+    '$top': 10000
+  }, TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS);
+  let availabilityPayload = [];
+  try {
+    availabilityPayload = await fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', city, {
+      '$top': 10000
+    }, TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS);
+  } catch (error) {
+    console.error(`TDX ${city} parking availability unavailable; parking locations are retained:`, error.message);
+  }
+
+  const parkingLots = asArray(parkingLotsPayload, ['ParkingLots', 'CarParks']);
+  const availability = asArray(availabilityPayload, ['ParkingAvailabilities', 'Availabilities']);
+  const availabilityById = new Map(availability.map((item) => [item.CarParkID || item.ParkingLotID, item]));
+  return parkingLots.map((parkingLot) => {
+    const parkingId = parkingLot.CarParkID || parkingLot.ParkingLotID || parkingLot.CarParkUID || '';
+    const position = positionOf(parkingLot);
+    const current = availabilityById.get(parkingId) || {};
+    const spaces = asArray(current.Availabilities);
+    const totalSpaces = finiteNumberOrNull(current.TotalSpaces ?? parkingLot.TotalSpaces)
+      ?? parkingSpaceTotal(spaces, 'NumberOfSpaces');
+    const availableSpaces = finiteNumberOrNull(current.AvailableSpaces)
+      ?? parkingSpaceTotal(spaces, 'AvailableSpaces');
+    const distanceMeters = Math.round(haversineMeters(origin.lat, origin.lng, position.lat, position.lng));
+    return {
+      parkingId,
+      parkingName: localizedText(parkingLot.CarParkName || parkingLot.ParkingLotName) || '未命名停車場',
+      city,
+      lat: position.lat,
+      lng: position.lng,
+      distanceMeters,
+      address: localizedText(parkingLot.Address) || String(parkingLot.Address || ''),
+      telephone: String(parkingLot.Telephone || parkingLot.Phone || ''),
+      fareDescription: localizedText(parkingLot.FareDescription) || String(parkingLot.FareDescription || ''),
+      serviceTime: String(parkingLot.ServiceTime || ''),
+      totalSpaces,
+      availableSpaces,
+      serviceStatus: finiteNumberOrNull(current.ServiceStatus ?? parkingLot.ServiceStatus),
+      fullStatus: finiteNumberOrNull(current.FullStatus),
+      updateTime: current.DataCollectTime || current.UpdateTime || parkingLot.UpdateTime || null
+    };
+  }).filter((parkingLot) => parkingLot.parkingId
+    && Number.isFinite(parkingLot.lat)
+    && Number.isFinite(parkingLot.lng)
+    && parkingLot.distanceMeters <= radiusMeters)
+    .sort((left, right) => left.distanceMeters - right.distanceMeters);
+}
+
+async function proxyParking(requestUrl, response) {
+  try {
+    const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
+    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
+    const requestedRadius = Number(requestUrl.searchParams.get('radius'));
+    const radiusMeters = Number.isFinite(requestedRadius)
+      ? Math.min(50_000, Math.max(1_000, requestedRadius))
+      : 10_000;
+    const data = await fetchParkingCityData(city, { lat, lng }, radiusMeters);
+    sendJson(response, 200, {
+      success: true,
+      source: '交通部 TDX 路外停車場與剩餘車位',
+      observedAt: new Date().toISOString(),
+      refreshIntervalSeconds: TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS / 1000,
+      data
+    });
+  } catch (error) {
+    if (error.status === 429) {
+      sendJson(response, 200, {
+        success: true,
+        degraded: true,
+        message: '請求過多，請稍後再試；目前暫無停車場即時資料',
+        source: '交通部 TDX 停車場降級模式',
+        observedAt: new Date().toISOString(),
+        refreshIntervalSeconds: TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS / 1000,
+        data: []
+      });
+      return;
+    }
+    sendApiError(response, error);
+  }
+}
+
 async function proxyRoadNetwork(requestUrl, response) {
   try {
     const south = Number(requestUrl.searchParams.get('south'));
@@ -1618,7 +1713,8 @@ const server = http.createServer(async (request, response) => {
           .filter((credential) => Date.now() >= credential.rateLimitedUntil).length
       },
       tdxRefreshIntervalSeconds: TDX_REFRESH_INTERVAL_MS / 1000,
-      tdxTrafficBikeRefreshIntervalSeconds: TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS / 1000
+      tdxTrafficBikeRefreshIntervalSeconds: TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS / 1000,
+      tdxParkingRefreshIntervalSeconds: TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS / 1000
     });
     return;
   }
@@ -1664,6 +1760,10 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === 'GET' && requestUrl.pathname === '/api/tdx/bike-all') {
     await proxyBikeAll(requestUrl, response);
+    return;
+  }
+  if (request.method === 'GET' && requestUrl.pathname === '/api/tdx/parking') {
+    await proxyParking(requestUrl, response);
     return;
   }
   if (request.method === 'GET' && requestUrl.pathname === '/api/map/roads') {

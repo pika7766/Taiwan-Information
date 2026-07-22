@@ -45,7 +45,7 @@ async function stopChild(child) {
 }
 
 async function runScenario({ allRateLimited }) {
-  const calls = { first429: 0, second429: 0, secondSuccess: 0 };
+  const calls = { first429: 0, second429: 0, secondSuccess: 0, parkingLot: 0, parkingAvailability: 0 };
   const mock = http.createServer((request, response) => {
     if (request.url === '/token') {
       let body = '';
@@ -74,6 +74,31 @@ async function runScenario({ allRateLimited }) {
     if (authorization === 'Bearer second-token') {
       calls.secondSuccess += 1;
       response.writeHead(200, { 'Content-Type': 'application/json' });
+      if (request.url.includes('/v1/Parking/OffStreet/ParkingLot/City/Taipei')) {
+        calls.parkingLot += 1;
+        response.end(JSON.stringify([{
+          CarParkID: 'P001',
+          CarParkName: { Zh_tw: '測試停車場' },
+          CarParkPosition: { PositionLat: 25.0332, PositionLon: 121.5656 },
+          Address: '臺北市信義區測試路 1 號',
+          Telephone: '02-12345678',
+          FareDescription: { Zh_tw: '每小時 30 元' },
+          ServiceTime: '24 小時',
+          TotalSpaces: 50
+        }]));
+        return;
+      }
+      if (request.url.includes('/v1/Parking/OffStreet/ParkingAvailability/City/Taipei')) {
+        calls.parkingAvailability += 1;
+        response.end(JSON.stringify([{
+          CarParkID: 'P001',
+          TotalSpaces: 50,
+          AvailableSpaces: 17,
+          ServiceStatus: 1,
+          DataCollectTime: '2026-07-22T12:00:00+08:00'
+        }]));
+        return;
+      }
       response.end('[]');
       return;
     }
@@ -119,7 +144,11 @@ async function runScenario({ allRateLimited }) {
       `http://127.0.0.1:${appPort}/api/tdx/bus-stops?lat=25.033&lng=121.5654&city=Taipei`
     );
     const stopPayload = await stopResponse.json();
-    return { calls, status, stopResponse, stopPayload };
+    const parkingResponse = await fetch(
+      `http://127.0.0.1:${appPort}/api/tdx/parking?lat=25.033&lng=121.5654&city=Taipei&radius=5000`
+    );
+    const parkingPayload = await parkingResponse.json();
+    return { calls, status, stopResponse, stopPayload, parkingResponse, parkingPayload };
   } catch (error) {
     error.message += `\nServer output:\n${output}`;
     throw error;
@@ -136,10 +165,20 @@ test('TDX credentials rotate on 429 and report only aggregate status', async () 
   assert.equal(result.status.credentials.tdxAvailableCredentialCount, 1);
   assert.equal(result.status.tdxRefreshIntervalSeconds, 5);
   assert.equal(result.status.tdxTrafficBikeRefreshIntervalSeconds, 300);
+  assert.equal(result.status.tdxParkingRefreshIntervalSeconds, 300);
   assert.equal(result.stopResponse.status, 200);
   assert.equal(result.stopPayload.success, true);
   assert.ok(result.calls.first429 >= 1);
   assert.ok(result.calls.secondSuccess >= 1);
+  assert.equal(result.parkingResponse.status, 200);
+  assert.equal(result.parkingPayload.refreshIntervalSeconds, 300);
+  assert.equal(result.parkingPayload.data[0].parkingId, 'P001');
+  assert.equal(result.parkingPayload.data[0].parkingName, '測試停車場');
+  assert.equal(result.parkingPayload.data[0].availableSpaces, 17);
+  assert.equal(result.parkingPayload.data[0].totalSpaces, 50);
+  assert.ok(result.parkingPayload.data[0].distanceMeters < 50);
+  assert.equal(result.calls.parkingLot, 1);
+  assert.equal(result.calls.parkingAvailability, 1);
 });
 
 test('the server reports the requested message only after every credential receives 429', async () => {
@@ -147,6 +186,8 @@ test('the server reports the requested message only after every credential recei
   assert.equal(result.status.credentials.tdxAvailableCredentialCount, 0);
   assert.equal(result.stopPayload.degraded, true);
   assert.equal(result.stopPayload.message, '請求過多，請稍後再試');
+  assert.equal(result.parkingPayload.degraded, true);
+  assert.equal(result.parkingPayload.message, '請求過多，請稍後再試；目前暫無停車場即時資料');
   assert.ok(result.calls.first429 >= 1);
   assert.ok(result.calls.second429 >= 1);
 });
