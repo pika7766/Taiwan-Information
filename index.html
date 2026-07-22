@@ -290,6 +290,10 @@
               <span><strong class="block text-sm text-slate-900">TDX 資料取得</strong><span id="admin-tdx-state" class="mt-1 block text-xs text-slate-500"></span></span>
               <input id="admin-tdx-toggle" type="checkbox" role="switch" class="h-5 w-5 shrink-0 accent-brand-700">
             </label>
+            <label class="flex min-h-14 items-center justify-between gap-4 rounded-md border border-slate-200 px-4 py-3">
+              <span><strong class="block text-sm text-slate-900">中央氣象署資料取得</strong><span id="admin-cwa-state" class="mt-1 block text-xs text-slate-500"></span></span>
+              <input id="admin-cwa-toggle" type="checkbox" role="switch" class="h-5 w-5 shrink-0 accent-brand-700">
+            </label>
             <dl class="divide-y divide-slate-200 border-y border-slate-200 text-sm">
               <div class="flex items-center justify-between py-3"><dt class="text-slate-500">可用憑證</dt><dd id="admin-credentials" class="font-bold text-slate-900">-</dd></div>
               <div class="flex items-center justify-between py-3"><dt class="text-slate-500">TDX 快取</dt><dd id="admin-cache-count" class="font-bold text-slate-900">-</dd></div>
@@ -507,8 +511,12 @@
     const TAIPEI_101 = [25.0336, 121.5648];
     const FALLBACK_ZOOM = 16;
     const TAIWAN_BOUNDS = [[21.5, 119.0], [26.0, 122.5]];
+    const GEOLOCATION_FALLBACK_DELAY_MS = 10_000;
     const BUS_REFRESH_INTERVAL_MS = 12_000;
     const SLOW_TRANSPORT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+    const PUBLIC_STATUS_REFRESH_INTERVAL_MS = 15_000;
+    const TDX_DISABLED_MESSAGE = '管理員已關閉運輸資訊';
+    const CWA_DISABLED_MESSAGE = '管理員已關閉天氣資訊';
     const state = {
       config: null,
       selectedCityCode: null,
@@ -520,6 +528,8 @@
       pendingLocation: null,
       usingFallback: false,
       locationResolved: false,
+      locationRequestSequence: 0,
+      locationFallbackTimer: null,
       searchTimer: null,
       resizeTimer: null,
       resizeFrame: null,
@@ -551,6 +561,9 @@
       lastTrafficRoads: [],
       mapClickSequence: 0,
       notificationTimer: null,
+      publicStatusTimer: null,
+      publicTdxFetchingEnabled: null,
+      publicCwaFetchingEnabled: null,
       requestMessageTimer: null,
       lastDegradedNoticeAt: 0,
       notificationSnapshots: {},
@@ -593,6 +606,8 @@
       adminPanel: document.getElementById('admin-panel'),
       adminTdxToggle: document.getElementById('admin-tdx-toggle'),
       adminTdxState: document.getElementById('admin-tdx-state'),
+      adminCwaToggle: document.getElementById('admin-cwa-toggle'),
+      adminCwaState: document.getElementById('admin-cwa-state'),
       adminCredentials: document.getElementById('admin-credentials'),
       adminCacheCount: document.getElementById('admin-cache-count'),
       adminScope: document.getElementById('admin-scope'),
@@ -795,7 +810,7 @@
         if (state.pendingLocation) selectNearestCity(state.pendingLocation[0], state.pendingLocation[1]);
         else if (state.usingFallback && config.cities.Taipei) setSelectedCity('Taipei');
         else updateDrawerCity();
-        scheduleTransportLayerRefresh();
+        scheduleTransportLayerRefresh(0);
       } catch (error) {
         console.error('讀取 api_config.json 失敗：', error);
         showConfigError(error);
@@ -810,24 +825,40 @@
 
     // 使用瀏覽器定位；部署環境必須使用 HTTPS 才能穩定取得權限。
     function requestUserLocation() {
+      const requestSequence = ++state.locationRequestSequence;
       state.locationResolved = false;
+      window.clearTimeout(state.locationFallbackTimer);
       window.clearTimeout(state.transportRefreshTimer);
       if (elements.locationStatus) elements.locationStatus.textContent = '正在取得目前位置...';
       if (elements.locateButton) elements.locateButton.disabled = true;
 
+      let fallbackReason = '定位逾時';
+      state.locationFallbackTimer = window.setTimeout(() => {
+        if (requestSequence !== state.locationRequestSequence || state.locationResolved) return;
+        useFallbackLocation(fallbackReason);
+      }, GEOLOCATION_FALLBACK_DELAY_MS);
+
       if (!navigator.geolocation) {
-        useFallbackLocation('此瀏覽器不支援定位');
+        fallbackReason = '此瀏覽器不支援定位';
         return;
       }
 
       navigator.geolocation.getCurrentPosition(
-        ({ coords }) => useUserLocation(coords.latitude, coords.longitude, coords.accuracy),
-        (error) => useFallbackLocation(getGeolocationErrorMessage(error)),
+        ({ coords }) => {
+          if (requestSequence !== state.locationRequestSequence || state.locationResolved) return;
+          window.clearTimeout(state.locationFallbackTimer);
+          useUserLocation(coords.latitude, coords.longitude, coords.accuracy);
+        },
+        (error) => {
+          if (requestSequence !== state.locationRequestSequence || state.locationResolved) return;
+          fallbackReason = getGeolocationErrorMessage(error);
+        },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
       );
     }
 
     function useUserLocation(latitude, longitude, accuracy) {
+      window.clearTimeout(state.locationFallbackTimer);
       if (latitude < TAIWAN_BOUNDS[0][0] || latitude > TAIWAN_BOUNDS[1][0]
         || longitude < TAIWAN_BOUNDS[0][1] || longitude > TAIWAN_BOUNDS[1][1]) {
         useFallbackLocation('目前位置不在臺灣地圖範圍');
@@ -856,13 +887,14 @@
         else state.map.setView(position, 16, { animate: false });
       }
       if (state.config) selectNearestCity(latitude, longitude);
-      scheduleTransportLayerRefresh();
+      scheduleTransportLayerRefresh(0);
 
       // 定位視角設定後再次刷新，避免定位期間容器尺寸仍在變動。
       scheduleMapResize(200);
     }
 
     function useFallbackLocation(reason) {
+      window.clearTimeout(state.locationFallbackTimer);
       state.pendingLocation = null;
       state.usingFallback = true;
       state.locationResolved = true;
@@ -883,7 +915,7 @@
         }
       }
       if (state.config && state.config.cities.Taipei) setSelectedCity('Taipei');
-      scheduleTransportLayerRefresh();
+      scheduleTransportLayerRefresh(0);
 
       // 備援視角與 Marker 完成後再次強制補齊圖磚。
       scheduleMapResize(200);
@@ -1152,7 +1184,7 @@
       scheduleTransportLayerRefresh();
     }
 
-    function scheduleTransportLayerRefresh() {
+    function scheduleTransportLayerRefresh(delayMs = 800) {
       refreshMapLayout([0, 100]);
       if (!state.locationResolved) return;
       window.clearTimeout(state.transportRefreshTimer);
@@ -1165,7 +1197,7 @@
         state.transportHasInitialized = true;
         refreshTransportLayers(center.lat, center.lng, cityCode)
           .catch((error) => console.error('交通圖層更新失敗：', error));
-      }, 800);
+      }, delayMs);
     }
 
     const PLACE_TYPE_LABELS = {
@@ -1996,6 +2028,31 @@
       }, 5000);
     }
 
+    async function refreshPublicServiceStatus({ notify = true } = {}) {
+      const response = await fetch(new URL('/api/status', API_BASE_URL), {
+        headers: { Accept: 'application/json' }, cache: 'no-store'
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) throw new Error(payload.message || `HTTP ${response.status}`);
+      const previousTdxState = state.publicTdxFetchingEnabled;
+      state.publicTdxFetchingEnabled = payload.tdxFetchingEnabled !== false;
+      state.publicCwaFetchingEnabled = payload.cwaFetchingEnabled !== false;
+      if (notify && !state.publicTdxFetchingEnabled && previousTdxState !== false) {
+        showRequestMessage(TDX_DISABLED_MESSAGE);
+      }
+      return payload;
+    }
+
+    function schedulePublicServiceStatusRefresh() {
+      window.clearTimeout(state.publicStatusTimer);
+      state.publicStatusTimer = window.setTimeout(async () => {
+        if (!document.hidden) {
+          await refreshPublicServiceStatus().catch((error) => console.error('服務狀態讀取失敗：', error));
+        }
+        schedulePublicServiceStatusRefresh();
+      }, PUBLIC_STATUS_REFRESH_INTERVAL_MS);
+    }
+
     async function fetchOfficialData(pathname, parameters, signal) {
       const endpoint = new URL(pathname, API_BASE_URL);
       Object.entries(parameters).forEach(([key, value]) => endpoint.searchParams.set(key, value));
@@ -2011,7 +2068,7 @@
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.success) {
         const message = response.status === 429 ? '請求過多，請稍後再試' : (payload.message || `HTTP ${response.status}`);
-        if (response.status === 429) showRequestMessage(message);
+        if (response.status === 429 || message === TDX_DISABLED_MESSAGE) showRequestMessage(message);
         const error = new Error(message);
         error.status = response.status;
         throw error;
@@ -2125,7 +2182,9 @@
       title.className = 'mt-2 text-xl font-bold leading-7 text-slate-950';
       title.textContent = `${region.cityName}${region.district}生活資訊報導`;
       const description = createReportParagraph(
-        '以下內容直接整理中央氣象署與政府資料開放平臺的回應。五個資料夾預設全部展開；交通資訊已改為地圖圖層，可由地圖左上角分別開關。',
+        state.publicCwaFetchingEnabled === false
+          ? '天氣資訊目前由管理員關閉；其餘內容仍直接整理政府資料開放平臺的回應。交通資訊可由地圖左上角分別開關。'
+          : '以下內容直接整理中央氣象署與政府資料開放平臺的回應。五個資料夾預設全部展開；交通資訊已改為地圖圖層，可由地圖左上角分別開關。',
         'mt-2 text-sm leading-6 text-slate-600'
       );
       const meta = createReportParagraph(
@@ -2136,7 +2195,7 @@
 
       const loading = document.createElement('div');
       loading.className = 'mt-4 flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600';
-      loading.innerHTML = '<span class="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>正在向中央氣象署與政府資料開放平臺讀取官方資料...';
+      loading.innerHTML = `<span class="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>${state.publicCwaFetchingEnabled === false ? '正在向政府資料開放平臺讀取官方資料...' : '正在向中央氣象署與政府資料開放平臺讀取官方資料...'}`;
       elements.infoContent.replaceChildren(introduction, loading);
 
       const [weatherResult, safetyResult, reportsResult] = await Promise.allSettled([
@@ -2169,7 +2228,15 @@
           }] : unavailableArticle('當地區域天氣', new Error('中央氣象署回應中沒有可解析的天氣、溫度或降雨機率。'))
         });
       } else {
-        folderData.push({ name: '當地區域天氣', source: '中央氣象署 F-D0047-093', observedAt: null, articles: unavailableArticle('當地區域天氣', weatherResult.reason) });
+        const disabledByAdmin = weatherResult.reason?.message === CWA_DISABLED_MESSAGE;
+        folderData.push({
+          name: '當地區域天氣',
+          source: disabledByAdmin ? '系統管理設定' : '中央氣象署 F-D0047-093',
+          observedAt: null,
+          articles: disabledByAdmin
+            ? [{ title: CWA_DISABLED_MESSAGE, paragraphs: ['目前不會向中央氣象署讀取新的天氣資料。'] }]
+            : unavailableArticle('當地區域天氣', weatherResult.reason)
+        });
       }
 
       if (safetyResult.status === 'fulfilled') {
@@ -2251,6 +2318,7 @@
       elements.adminLoginForm.classList.remove('hidden');
       elements.adminPanel.classList.add('hidden');
       elements.adminTdxToggle.disabled = false;
+      elements.adminCwaToggle.disabled = false;
     }
 
     function renderAdminStatus(payload) {
@@ -2260,7 +2328,10 @@
       elements.adminTdxToggle.checked = payload.tdxFetchingEnabled === true;
       elements.adminTdxToggle.disabled = false;
       elements.adminTdxState.textContent = payload.tdxFetchingEnabled ? '目前允許伺服器連線' : '目前已停止新連線';
-      elements.adminCredentials.textContent = `${payload.tdxAvailableCredentialCount} / ${payload.tdxCredentialCount}`;
+      elements.adminCwaToggle.checked = payload.cwaFetchingEnabled === true;
+      elements.adminCwaToggle.disabled = false;
+      elements.adminCwaState.textContent = payload.cwaFetchingEnabled ? '目前允許伺服器連線' : '目前已停止新連線';
+      elements.adminCredentials.textContent = `一般 ${payload.tdxGeneralAvailableCredentialCount} / ${payload.tdxGeneralCredentialCount}；公車詳細 ${payload.tdxReservedBusDetailAvailableCredentialCount} / ${payload.tdxReservedBusDetailCredentialCount}`;
       elements.adminCacheCount.textContent = String(payload.cachedTdxQueries ?? 0);
       elements.adminScope.textContent = payload.acquisitionScope?.nationwideSingleRequestAvailable
         ? 'TDX 提供全臺單次資料端點。'
@@ -2358,6 +2429,33 @@
         showAdminMessage(error.message);
       } finally {
         elements.adminTdxToggle.disabled = false;
+      }
+    }
+
+    async function updateAdminCwaSetting() {
+      const enabled = elements.adminCwaToggle.checked;
+      elements.adminCwaToggle.disabled = true;
+      try {
+        const response = await fetch(new URL('/api/admin/cwa', API_BASE_URL), {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          showAdminLogin();
+          throw new Error(payload.message || '請重新登入');
+        }
+        if (!response.ok || !payload.success) throw new Error(payload.message || `HTTP ${response.status}`);
+        renderAdminStatus(payload);
+        state.publicCwaFetchingEnabled = enabled;
+        showAdminMessage(enabled ? '中央氣象署資料取得已啟用' : '中央氣象署資料取得已停用', 'success');
+      } catch (error) {
+        elements.adminCwaToggle.checked = !enabled;
+        showAdminMessage(error.message);
+      } finally {
+        elements.adminCwaToggle.disabled = false;
       }
     }
 
@@ -2743,6 +2841,7 @@
       }, '#admin-modal');
       bindEventListener(elements.adminLoginForm, 'submit', submitAdminLogin, '#admin-login-form');
       bindEventListener(elements.adminTdxToggle, 'change', updateAdminTdxSetting, '#admin-tdx-toggle');
+      bindEventListener(elements.adminCwaToggle, 'change', updateAdminCwaSetting, '#admin-cwa-toggle');
       bindEventListener(elements.adminRefreshButton, 'click', () => {
         loadAdminStatus().catch((error) => showAdminMessage(error.message));
       }, '#admin-refresh-button');
@@ -2788,7 +2887,10 @@
       bindEventListener(window, 'resize', () => refreshMapLayout([0, 100, 300]), 'window');
       bindEventListener(window, 'orientationchange', () => refreshMapLayout([0, 150, 400]), 'window orientationchange');
       bindEventListener(document, 'visibilitychange', () => {
-        if (!document.hidden) refreshMapLayout([0, 100, 300]);
+        if (!document.hidden) {
+          refreshMapLayout([0, 100, 300]);
+          refreshPublicServiceStatus().catch((error) => console.error('服務狀態讀取失敗：', error));
+        }
       }, 'document visibilitychange');
       bindEventListener(document, 'transitionend', (event) => {
         if (event.target.closest?.('#app')) scheduleMapResize(0);
@@ -2830,6 +2932,8 @@
     window.addEventListener('load', () => {
       runInitializationStep('設定檔', loadConfig);
       runInitializationStep('定位', requestUserLocation);
+      refreshPublicServiceStatus().catch((error) => console.error('服務狀態讀取失敗：', error));
+      schedulePublicServiceStatusRefresh();
       window.setTimeout(() => runInitializationStep('分享地圖狀態', applySharedMapState), 1600);
       if (state.map) state.map.invalidateSize({ pan: false });
       refreshMapLayout([0, 100, 300, 700]);

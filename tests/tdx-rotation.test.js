@@ -47,7 +47,9 @@ async function stopChild(child) {
 async function runScenario({ allRateLimited }) {
   const calls = {
     first429: 0, second429: 0, secondSuccess: 0,
-    parkingLot: 0, parkingAvailability: 0, disabledParking: 0
+    parkingLot: 0, parkingAvailability: 0, disabledParking: 0,
+    detailFirst429: 0, detailSecondSuccess: 0,
+    generalCredentialOnBusDetail: 0, reservedCredentialOnGeneralRequest: 0
   };
   const mock = http.createServer((request, response) => {
     if (request.url === '/token') {
@@ -62,6 +64,46 @@ async function runScenario({ allRateLimited }) {
     }
 
     const authorization = request.headers.authorization;
+    const isBusDetailRequest = request.url.includes('/v2/Bus/StopOfRoute/City/Taipei/307')
+      || request.url.includes('/v2/Bus/EstimatedTimeOfArrival/City/Taipei/307');
+    if (isBusDetailRequest && ['Bearer first-token', 'Bearer second-token'].includes(authorization)) {
+      calls.generalCredentialOnBusDetail += 1;
+    }
+    if (!isBusDetailRequest && ['Bearer detail-first-token', 'Bearer detail-second-token'].includes(authorization)) {
+      calls.reservedCredentialOnGeneralRequest += 1;
+    }
+    if (authorization === 'Bearer detail-first-token') {
+      calls.detailFirst429 += 1;
+      response.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+      response.end(JSON.stringify({ message: 'reserved detail credential limited' }));
+      return;
+    }
+    if (authorization === 'Bearer detail-second-token') {
+      calls.detailSecondSuccess += 1;
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      if (request.url.includes('/v2/Bus/StopOfRoute/City/Taipei/307')) {
+        response.end(JSON.stringify([{
+          RouteUID: 'R307',
+          RouteName: { Zh_tw: '307' },
+          Direction: 0,
+          Stops: [{
+            StopUID: 'S001',
+            StopName: { Zh_tw: '測試站' },
+            StopSequence: 1,
+            StopPosition: { PositionLat: 25.0332, PositionLon: 121.5656 }
+          }]
+        }]));
+        return;
+      }
+      response.end(JSON.stringify([{
+        StopUID: 'S001',
+        RouteName: { Zh_tw: '307' },
+        Direction: 0,
+        PlateNumb: 'TEST-001',
+        EstimateTime: 120
+      }]));
+      return;
+    }
     if (authorization === 'Bearer first-token') {
       calls.first429 += 1;
       response.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
@@ -129,7 +171,13 @@ async function runScenario({ allRateLimited }) {
     TDX_CLIENT_SECRET: 'first-secret',
     TDX_CLIENT_ID_2: 'second',
     TDX_CLIENT_SECRET_2: 'second-secret',
+    TDX_CLIENT_ID_3: 'detail-first',
+    TDX_CLIENT_SECRET_3: 'detail-first-secret',
+    TDX_CLIENT_ID_4: 'detail-second',
+    TDX_CLIENT_SECRET_4: 'detail-second-secret',
     TDX_CREDENTIALS_JSON: '[]',
+    CWA_API_KEY: 'test-cwa-key',
+    CWA_FETCH_ENABLED: 'true',
     TDX_REFRESH_INTERVAL_MS: '5000',
     BUS_REFRESH_INTERVAL_MS: '12000',
     TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS: '300000',
@@ -143,11 +191,11 @@ async function runScenario({ allRateLimited }) {
   child.stderr.on('data', (chunk) => { output += chunk; });
 
   try {
-    const expectedAvailable = allRateLimited ? 0 : 1;
+    const expectedGeneralAvailable = allRateLimited ? 0 : 1;
     const status = await waitFor(async () => {
       const response = await fetch(`http://127.0.0.1:${appPort}/api/status`);
       const payload = await response.json();
-      return payload.credentials.tdxAvailableCredentialCount === expectedAvailable ? payload : null;
+      return payload.credentials.tdxGeneralAvailableCredentialCount === expectedGeneralAvailable ? payload : null;
     });
     const stopResponse = await fetch(
       `http://127.0.0.1:${appPort}/api/tdx/bus-stops?lat=25.033&lng=121.5654&city=Taipei`
@@ -157,6 +205,14 @@ async function runScenario({ allRateLimited }) {
       `http://127.0.0.1:${appPort}/api/tdx/parking?lat=25.033&lng=121.5654&city=Taipei&radius=5000`
     );
     const parkingPayload = await parkingResponse.json();
+    let busDetailResponse = null;
+    let busDetailPayload = null;
+    if (!allRateLimited) {
+      busDetailResponse = await fetch(
+        `http://127.0.0.1:${appPort}/api/tdx/bus-details?lat=25.033&lng=121.5654&city=Taipei&routeName=307&plateNumber=TEST-001&direction=0&currentStopUid=S001`
+      );
+      busDetailPayload = await busDetailResponse.json();
+    }
     let admin = null;
     if (!allRateLimited) {
       const unauthorizedStatusResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/status`);
@@ -184,6 +240,20 @@ async function runScenario({ allRateLimited }) {
         body: JSON.stringify({ enabled: true })
       });
       const enablePayload = await enableResponse.json();
+      const disableCwaResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/cwa`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ enabled: false })
+      });
+      const disableCwaPayload = await disableCwaResponse.json();
+      const disabledWeatherResponse = await fetch(
+        `http://127.0.0.1:${appPort}/api/weather?city=Taipei&district=Xinyi&lat=25.033&lng=121.5654`
+      );
+      const disabledWeatherPayload = await disabledWeatherResponse.json();
+      const enableCwaResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/cwa`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ enabled: true })
+      });
+      const enableCwaPayload = await enableCwaResponse.json();
       await fetch(`http://127.0.0.1:${appPort}/api/admin/logout`, {
         method: 'POST', headers: { Cookie: cookie }
       });
@@ -199,10 +269,17 @@ async function runScenario({ allRateLimited }) {
         disabledParkingStatus: disabledParkingResponse.status,
         disabledParkingPayload,
         enablePayload,
+        disableCwaPayload,
+        disabledWeatherStatus: disabledWeatherResponse.status,
+        disabledWeatherPayload,
+        enableCwaPayload,
         loggedOutStatus: loggedOutStatusResponse.status
       };
     }
-    return { calls, status, stopResponse, stopPayload, parkingResponse, parkingPayload, admin };
+    return {
+      calls, status, stopResponse, stopPayload, parkingResponse, parkingPayload,
+      busDetailResponse, busDetailPayload, admin
+    };
   } catch (error) {
     error.message += `\nServer output:\n${output}`;
     throw error;
@@ -215,8 +292,13 @@ async function runScenario({ allRateLimited }) {
 
 test('TDX credentials rotate on 429 and report only aggregate status', async () => {
   const result = await runScenario({ allRateLimited: false });
-  assert.equal(result.status.credentials.tdxCredentialCount, 2);
-  assert.equal(result.status.credentials.tdxAvailableCredentialCount, 1);
+  assert.equal(result.status.credentials.tdxCredentialCount, 4);
+  assert.equal(result.status.credentials.tdxAvailableCredentialCount, 3);
+  assert.equal(result.status.credentials.tdxGeneralCredentialCount, 2);
+  assert.equal(result.status.credentials.tdxGeneralAvailableCredentialCount, 1);
+  assert.equal(result.status.credentials.tdxReservedBusDetailCredentialCount, 2);
+  assert.equal(result.status.credentials.tdxReservedBusDetailAvailableCredentialCount, 2);
+  assert.equal(result.status.cwaFetchingEnabled, true);
   assert.equal(result.status.busRefreshIntervalSeconds, 12);
   assert.equal(result.status.tdxRefreshIntervalSeconds, 5);
   assert.equal(result.status.tdxTrafficBikeRefreshIntervalSeconds, 300);
@@ -234,25 +316,39 @@ test('TDX credentials rotate on 429 and report only aggregate status', async () 
   assert.ok(result.parkingPayload.data[0].distanceMeters < 50);
   assert.equal(result.calls.parkingLot, 1);
   assert.equal(result.calls.parkingAvailability, 1);
+  assert.equal(result.busDetailResponse.status, 200);
+  assert.equal(result.busDetailPayload.success, true);
+  assert.equal(result.busDetailPayload.data.routes[0].routeName, '307');
+  assert.ok(result.calls.detailFirst429 >= 1);
+  assert.ok(result.calls.detailSecondSuccess >= 2);
+  assert.equal(result.calls.generalCredentialOnBusDetail, 0);
+  assert.equal(result.calls.reservedCredentialOnGeneralRequest, 0);
   assert.equal(result.admin.unauthorizedStatus, 401);
   assert.equal(result.admin.wrongLoginStatus, 401);
   assert.equal(result.admin.loginStatus, 200);
   assert.equal(result.admin.loginPayload.authenticated, true);
   assert.equal(result.admin.disablePayload.tdxFetchingEnabled, false);
   assert.equal(result.admin.disabledParkingStatus, 503);
-  assert.equal(result.admin.disabledParkingPayload.message, '管理員已暫停 TDX 資料更新');
+  assert.equal(result.admin.disabledParkingPayload.message, '管理員已關閉運輸資訊');
   assert.equal(result.calls.disabledParking, 0);
   assert.equal(result.admin.enablePayload.tdxFetchingEnabled, true);
+  assert.equal(result.admin.disableCwaPayload.cwaFetchingEnabled, false);
+  assert.equal(result.admin.disabledWeatherStatus, 503);
+  assert.equal(result.admin.disabledWeatherPayload.message, '管理員已關閉天氣資訊');
+  assert.equal(result.admin.enableCwaPayload.cwaFetchingEnabled, true);
   assert.equal(result.admin.loggedOutStatus, 401);
 });
 
 test('the server reports the requested message only after every credential receives 429', async () => {
   const result = await runScenario({ allRateLimited: true });
-  assert.equal(result.status.credentials.tdxAvailableCredentialCount, 0);
+  assert.equal(result.status.credentials.tdxAvailableCredentialCount, 2);
+  assert.equal(result.status.credentials.tdxGeneralAvailableCredentialCount, 0);
+  assert.equal(result.status.credentials.tdxReservedBusDetailAvailableCredentialCount, 2);
   assert.equal(result.stopPayload.degraded, true);
   assert.equal(result.stopPayload.message, '請求過多，請稍後再試');
   assert.equal(result.parkingPayload.degraded, true);
   assert.equal(result.parkingPayload.message, '請求過多，請稍後再試；目前暫無停車場即時資料');
   assert.ok(result.calls.first429 >= 1);
   assert.ok(result.calls.second429 >= 1);
+  assert.equal(result.calls.reservedCredentialOnGeneralRequest, 0);
 });

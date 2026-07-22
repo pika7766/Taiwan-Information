@@ -29,7 +29,7 @@
 
 - 服務選單提供管理員登入，預設帳號為 `admin`、密碼為 `7766`。
 - 登入狀態使用伺服器端 session 與 HttpOnly Cookie，不會將密碼或 session 寫入瀏覽器儲存空間。
-- 管理員可即時啟用或停用所有新的 TDX token、資料請求與背景更新；停用期間仍保留既有伺服器快取。
+- 管理員可分別啟用或停用 TDX 運輸資訊與中央氣象署資料取得；TDX 停用期間仍保留既有伺服器快取。
 
 ### 生活與公共資訊
 
@@ -66,7 +66,7 @@
 2. 瀏覽器完成定位判定後，選擇使用者位置或台北 101。
 3. 設定檔與定位皆完成後，前端向同網域的 Node.js API 請求圖層資料。
 4. 後端代理 CWA、TDX、data.gov.tw、Nominatim 及 Overpass，並統一處理快取與錯誤。
-5. 後端每 5 秒更新公車動態，每 5 分鐘更新路況、YouBike 與停車場，所有使用者讀取同一份共享快取。
+5. 後端每 12 秒更新公車動態，每 5 分鐘更新路況、YouBike 與停車場，所有使用者讀取同一份共享快取。
 6. TDX 單組憑證遇到 `429` 時依設定順序切換，只有全部憑證都被限流才進入「請求過多」錯誤或快取降級狀態。
 7. 外部服務失敗時保留既有快取，讓地圖與其他功能仍可繼續使用。
 
@@ -99,6 +99,7 @@ TDX 官方 Swagger 顯示，市區公車、YouBike、縣市路況與縣市停車
 | 環境變數 | 必要 | 用途 |
 | --- | --- | --- |
 | `CWA_API_KEY` | 是 | 中央氣象署 API 憑證 |
+| `CWA_FETCH_ENABLED` | 否 | 服務啟動時是否允許取得中央氣象署資料，預設 `true` |
 | `ADMIN_USERNAME` | 否 | 管理員帳號，預設 `admin` |
 | `ADMIN_PASSWORD` | 否 | 管理員密碼，預設 `7766`；正式環境建議覆寫 |
 | `TDX_FETCH_ENABLED` | 否 | 服務啟動時是否允許取得 TDX，預設 `true` |
@@ -138,14 +139,17 @@ TDX_CLIENT_ID_8
 TDX_CLIENT_SECRET_8
 ```
 
+伺服器在至少有三組完整憑證時，會依載入順序保留最後兩組。使用上述八組編號時，`TDX_CLIENT_ID_7`／`TDX_CLIENT_SECRET_7` 與 `TDX_CLIENT_ID_8`／`TDX_CLIENT_SECRET_8` 只用於使用者點擊某輛公車後的站序與預估到站資料；公車背景快照、站牌、路況、YouBike、停車場及其他 TDX 快取只使用第 1～6 組。兩個憑證池各自處理 `429` 輪替，不會互相借用。若完整憑證少於三組，全部歸一般池，公車詳細資料專用池會保持停用而不借用一般池。
+
 更新間隔已有正確預設值；除非要覆寫，不必在 Render 設定 `BUS_REFRESH_INTERVAL_MS`、`TDX_REFRESH_INTERVAL_MS` 或 `TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS`。
 
 ## API 與安全性
 
 - `GET /api/status`：檢查服務及環境變數設定狀態，不回傳憑證內容。
 - `POST /api/admin/login`：建立管理員 session。
-- `GET /api/admin/status`：取得 TDX 開關、可用憑證與快取狀態，需管理員 session。
+- `GET /api/admin/status`：取得 TDX、中央氣象署開關、可用憑證與快取狀態，需管理員 session。
 - `POST /api/admin/tdx`：以 `{ "enabled": true|false }` 控制 TDX 資料取得，需管理員 session。
+- `POST /api/admin/cwa`：以 `{ "enabled": true|false }` 控制中央氣象署資料取得，需管理員 session。
 - `POST /api/admin/logout`：登出並清除管理員 session。
 - `GET /api/tdx/bus?scope=all`：取得目前已儲存的全臺公車快照。
 - `GET /api/tdx/parking?lat=25.033&lng=121.5654&city=Taipei&radius=5000`：取得附近停車場與剩餘車位。
