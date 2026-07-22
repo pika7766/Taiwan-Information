@@ -162,7 +162,7 @@
     .route-stop-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
     .route-stop-item:last-child { border-bottom: 0; }
     .route-stop-item.is-next { background: #fef3c7; color: #92400e; font-weight: 800; }
-    .personal-list button { width: 100%; text-align: left; }
+    .personal-list > div > button:first-child { width: 100%; text-align: left; }
     #tutorial-card {
       flex: 0 1 56rem;
       width: calc(100vw - 1rem);
@@ -493,35 +493,111 @@
           </div>
           <button id="close-tutorial-button" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-md text-2xl text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-label="關閉使用教學">×</button>
         </div>
-        <div class="min-w-0 overflow-y-auto px-4 pb-5 sm:px-6">
-          <figure class="min-w-0 border-b border-slate-200 py-5">
-            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-map-search.png" alt="網站地圖首頁，標示搜尋、定位、縣市選擇與交通圖層控制位置">
-            <figcaption class="mt-4">
-              <h3 class="text-base font-bold text-slate-950">1. 找到要查看的位置</h3>
-              <p class="mt-2 text-sm leading-6 text-slate-600">允許定位即可前往目前位置，也能使用上方搜尋欄、縣市選單或重新定位按鈕。手動拖曳或縮放地圖後，停留 5 秒便會更新該地交通資料。</p>
-            </figcaption>
-          </figure>
-          <figure class="min-w-0 border-b border-slate-200 py-5">
-            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-transport-layers.png" alt="地圖左上角的即時路況、公車動態、YouBike 站點與停車場圖層按鈕">
-            <figcaption class="mt-4">
-              <h3 class="text-base font-bold text-slate-950">2. 切換交通圖層</h3>
-              <p class="mt-2 text-sm leading-6 text-slate-600">從左上角選擇即時路況、公車、YouBike 或停車場。YouBike 與停車場會以數量群組顯示，兩個圖層會互相切換，避免標記重疊。</p>
-            </figcaption>
-          </figure>
-          <figure class="min-w-0 border-b border-slate-200 py-5">
-            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-bus-route.png" alt="選取公車後顯示完整站序、路線與行進方向箭頭的畫面">
-            <figcaption class="mt-4">
-              <h3 class="text-base font-bold text-slate-950">3. 查看公車路線與站序</h3>
-              <p class="mt-2 text-sm leading-6 text-slate-600">開啟公車動態後點選車輛，即可看到目前方向的所有站牌；地圖上的淡紫色箭頭表示每一段路線的行進方向。</p>
-            </figcaption>
-          </figure>
-          <figure class="min-w-0 py-5">
-            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-local-services.png" alt="網站服務選單，顯示收藏、通知、管理員與政府資料分類">
-            <figcaption class="mt-4">
-              <h3 class="text-base font-bold text-slate-950">4. 查詢地方資訊與常用服務</h3>
-              <p class="mt-2 text-sm leading-6 text-slate-600">點選地圖任一位置可查看當地天氣、安全與生活資訊；「服務選單」可依分類開啟政府資料，也能管理收藏位置與通知。</p>
-            </figcaption>
-          </figure>
+        <div id="tutorial-content" class="min-w-0 overflow-y-auto px-4 pb-5 sm:px-6">
+          <nav class="sticky top-0 z-10 -mx-4 flex gap-2 overflow-x-auto border-b border-slate-200 bg-white/95 px-4 py-3 text-xs font-bold backdrop-blur sm:-mx-6 sm:px-6" aria-label="教學目錄">
+            <a class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-brand-800 hover:bg-brand-50" href="#tutorial-location">地圖與定位</a>
+            <a class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-brand-800 hover:bg-brand-50" href="#tutorial-layers">交通圖層</a>
+            <a class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-brand-800 hover:bg-brand-50" href="#tutorial-road-parking">路況停車</a>
+            <a class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-brand-800 hover:bg-brand-50" href="#tutorial-bus">公車</a>
+            <a class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-brand-800 hover:bg-brand-50" href="#tutorial-bike">YouBike</a>
+            <a class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-brand-800 hover:bg-brand-50" href="#tutorial-local">地方資訊</a>
+            <a class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-brand-800 hover:bg-brand-50" href="#tutorial-personal">收藏與通知</a>
+            <a class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-brand-800 hover:bg-brand-50" href="#tutorial-government">政府資料</a>
+            <a class="shrink-0 rounded-md border border-slate-200 px-3 py-2 text-brand-800 hover:bg-brand-50" href="#tutorial-links">連結與分享</a>
+          </nav>
+
+          <section id="tutorial-location" class="scroll-mt-16 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-map-search.png" alt="網站地圖首頁的服務選單、相關連結、使用教學、搜尋、縣市、分享與定位控制">
+            <h3 class="mt-4 text-base font-bold text-slate-950">1. 定位、搜尋與移動地圖</h3>
+            <ol class="mt-2 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-600">
+              <li>首次進入會詢問定位權限；取得位置後立即移到目前所在地，10 秒仍無結果則以台北 101 為中心。按右上角「◎」可重新定位。</li>
+              <li>在上方搜尋欄輸入至少 2 個字，選擇搜尋結果即可前往該位置；桌機也可使用「目前縣市」選單快速切換。</li>
+              <li>拖曳地圖或使用滾輪、雙指、右下角加減按鈕縮放。手動操作停止滿 5 秒後才會更新該地交通資料。</li>
+              <li>接近縣市邊界時，地圖中心周圍 500 公尺都進入另一縣市後才切換資料，避免在邊界重複讀取。</li>
+            </ol>
+          </section>
+
+          <section id="tutorial-layers" class="scroll-mt-16 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-transport-layers.png" alt="地圖左上角四個交通圖層按鈕與 YouBike 數量群組">
+            <h3 class="mt-4 text-base font-bold text-slate-950">2. 交通圖層與數量群組</h3>
+            <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
+              <li>左上角可分別開關「即時路況」、「公車動態」、「YouBike 站點」與「停車場」；按鈕會顯示目前是讀取中、顯示或隱藏。</li>
+              <li>YouBike 與停車場標記較多，縮小地圖時圓圈會顯示區域內站點／停車場數量，放大後會拆成個別標記。</li>
+              <li>YouBike 與停車場不能同時開啟；切換其中一個時，另一個會自動關閉，避免標記互相遮擋。</li>
+              <li>公車約每 12 秒更新；路況、YouBike 與停車場約每 5 分鐘更新。所有資料都讀取伺服器共用快取。</li>
+            </ul>
+          </section>
+
+          <section id="tutorial-road-parking" class="scroll-mt-16 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-road-parking.png" alt="道路壅塞色彩、停車場標記與剩餘車位資訊">
+            <h3 class="mt-4 text-base font-bold text-slate-950">3. 即時路況與停車場</h3>
+            <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
+              <li>開啟路況後，道路依綠色順暢、黃色緩慢、紅色壅塞、深紅色封閉顯示；點選道路可查看路段、平均速度與更新時間。</li>
+              <li>開啟停車場後，點選「P」標記可查看剩餘車位、總車位、營運狀態、地址、電話、服務時間與費率；未提供即時車位時會明確標示。</li>
+            </ul>
+          </section>
+
+          <section id="tutorial-bus" class="scroll-mt-16 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-bus-route.png" alt="選取公車後顯示完整站序、下一站、路線與行進方向箭頭">
+            <h3 class="mt-4 text-base font-bold text-slate-950">4. 公車動態、路線與站牌</h3>
+            <ol class="mt-2 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-600">
+              <li>開啟「公車動態」後，公車圖示方向代表行進方向；點選車輛可查看路線、車牌、狀態與速度。</li>
+              <li>公車詳情會列出該行駛方向的所有站牌，橘色項目是下一站；地圖上的淡紫色箭頭表示每一段的行進方向。</li>
+              <li>點選紫色站牌可查看經過該站的所有公車、預估到站時間與車牌，並可使用「收藏常用站」或「分享站點」。</li>
+              <li>關閉公車圖層、點選其他站點或點擊地圖查地方資訊時，已選路線會清除。</li>
+            </ol>
+          </section>
+
+          <section id="tutorial-bike" class="scroll-mt-16 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-bike-details.png" alt="YouBike 站點詳情，顯示可借車輛、可還空位、收藏與分享按鈕">
+            <h3 class="mt-4 text-base font-bold text-slate-950">5. YouBike 站點</h3>
+            <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
+              <li>開啟 YouBike 圖層並放大數量群組，點選單車圖示可查看站名、可借車輛與可還空位。</li>
+              <li>「收藏常用站」會將站點加入服務選單；「分享站點」會使用系統分享功能，無法使用時則複製網址。</li>
+              <li>若即時額度暫時不足，仍可能顯示伺服器快取的站點位置，但可借與可還數量會標示為未提供。</li>
+            </ul>
+          </section>
+
+          <section id="tutorial-local" class="scroll-mt-16 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-local-info.png" alt="點選地圖後顯示行政區、天氣、安全提醒與地方生活資訊">
+            <h3 class="mt-4 text-base font-bold text-slate-950">6. 點選地圖查看地方資訊</h3>
+            <ol class="mt-2 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-600">
+              <li>直接點選地圖任一位置，黃色圖釘會標示查詢點，右側面板（手機為底部面板）會辨識縣市與行政區。</li>
+              <li>面板會整理目前天氣、降雨、風力、氣象警特報、近期地震，以及政府開放資料中的地方生活資訊。</li>
+              <li>每個主題資料夾可展開查看摘要、來源與更新時間；點面板右上角「×」即可關閉。</li>
+            </ol>
+          </section>
+
+          <section id="tutorial-personal" class="scroll-mt-16 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-personal-tools.png" alt="服務選單中的地圖中心標註、通知與已收藏位置">
+            <h3 class="mt-4 text-base font-bold text-slate-950">7. 標註位置、收藏與通知</h3>
+            <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
+              <li>開啟「服務選單」，先把地圖中心移到目標位置，再選擇住家、學校或工作地點並按「標註地圖中心」，輸入名稱後儲存。</li>
+              <li>已標註位置、收藏的公車站／YouBike 站與最近查詢會列在選單中；點項目可返回該處，按「×」可刪除。</li>
+              <li>按「開啟通知」並允許瀏覽器權限後，網站頁面保持開啟期間，收藏站點從無車變有車、無空位變有空位，或所在地出現氣象／地震提醒時可收到通知。</li>
+              <li>收藏與通知設定保存在目前瀏覽器；清除網站資料或改用其他裝置後需重新設定。</li>
+            </ul>
+          </section>
+
+          <section id="tutorial-government" class="scroll-mt-16 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-government-data.png" alt="生活服務分類視窗中的行政區選擇、地方報導與政府開放資料清單">
+            <h3 class="mt-4 text-base font-bold text-slate-950">8. 生活服務與政府開放資料</h3>
+            <ol class="mt-2 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-600">
+              <li>在「服務選單」下方選擇生育保健、求職就業、交通、醫療等生活分類。</li>
+              <li>在彈出視窗選擇行政區，可查看該區主題報導、發布機關與政府資料集摘要。</li>
+              <li>「查看完整清單」會前往政府資料開放平臺；若該縣市有專屬 API，也會提供開啟連結。</li>
+            </ol>
+          </section>
+
+          <section id="tutorial-links" class="scroll-mt-16 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-related-links.png" alt="依政府、交通、氣象、購物、學習等主題整理的相關連結視窗">
+            <h3 class="mt-4 text-base font-bold text-slate-950">9. 相關連結與分享</h3>
+            <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
+              <li>「相關連結」依政府、交通、氣象、新聞、購物、學習、求職、社群等主題整理常用網站；點選後會在新分頁開啟。</li>
+              <li>桌機上方的「↗」可分享目前地圖中心、縮放層級與已選站點；支援系統分享時會開啟分享選單，否則複製網址。</li>
+              <li>分享網址開啟後會還原地圖位置，若包含公車站或 YouBike 站也會直接開啟該站詳情。</li>
+            </ul>
+          </section>
         </div>
       </div>
     </div>
@@ -673,6 +749,7 @@
       tutorialButton: document.getElementById('tutorial-button'),
       tutorialModal: document.getElementById('tutorial-modal'),
       tutorialCard: document.getElementById('tutorial-card'),
+      tutorialContent: document.getElementById('tutorial-content'),
       closeTutorialButton: document.getElementById('close-tutorial-button'),
       adminButton: document.getElementById('admin-button'),
       adminModal: document.getElementById('admin-modal'),
@@ -2812,6 +2889,7 @@
     function openTutorial() {
       elements.tutorialModal.classList.remove('hidden');
       elements.tutorialModal.classList.add('flex');
+      elements.tutorialContent.scrollTop = 0;
       requestAnimationFrame(() => {
         elements.tutorialModal.classList.remove('opacity-0');
         elements.tutorialCard.classList.remove('translate-y-3');
@@ -3198,6 +3276,12 @@
       bindEventListener(elements.tutorialModal, 'click', (event) => {
         if (event.target === elements.tutorialModal) closeTutorial();
       }, '#tutorial-modal');
+      document.querySelectorAll('#tutorial-content a[href^="#tutorial-"]').forEach((link) => {
+        bindEventListener(link, 'click', (event) => {
+          event.preventDefault();
+          document.querySelector(link.getAttribute('href'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, `教學目錄 ${link.getAttribute('href')}`);
+      });
       bindEventListener(elements.mapSearchForm, 'submit', searchMapLocation, '#map-search-form');
       bindEventListener(elements.mapSearchInput, 'input', () => {
         if (!elements.mapSearchInput.value.trim()) closeMapSearchResults();
