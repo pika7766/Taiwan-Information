@@ -143,6 +143,16 @@
       display: grid; width: 28px; height: 28px; place-items: center; border: 3px solid white; border-radius: 5px;
       background: #7c3aed; color: white; font-size: 15px; font-weight: 900; box-shadow: 0 3px 10px rgba(15, 23, 42, .32);
     }
+    .bus-route-stop-icon, .bus-route-arrow-icon { background: transparent; border: 0; }
+    .bus-route-stop-symbol {
+      display: grid; width: 27px; height: 27px; place-items: center; border: 3px solid white; border-radius: 999px;
+      background: #7c3aed; color: white; font-size: 11px; font-weight: 900; line-height: 1; box-shadow: 0 3px 10px rgba(15, 23, 42, .3);
+    }
+    .bus-route-stop-symbol.is-next { background: #d97706; }
+    .bus-route-arrow-symbol {
+      display: grid; width: 30px; height: 30px; place-items: center; color: #c4b5fd; font-size: 25px; font-weight: 900;
+      line-height: 1; text-shadow: 0 0 2px #fff, 0 1px 4px rgba(76, 29, 149, .65); transform-origin: center;
+    }
     .saved-place-icon { background: transparent; border: 0; }
     .saved-place-symbol {
       display: grid; width: 30px; height: 30px; place-items: center; border: 3px solid white; border-radius: 999px;
@@ -153,6 +163,14 @@
     .route-stop-item:last-child { border-bottom: 0; }
     .route-stop-item.is-next { background: #fef3c7; color: #92400e; font-weight: 800; }
     .personal-list button { width: 100%; text-align: left; }
+    #tutorial-card {
+      flex: 0 1 56rem;
+      width: calc(100vw - 1rem);
+      min-width: 0;
+      max-width: min(56rem, calc(100vw - 1rem));
+    }
+    #tutorial-card figure, #tutorial-card img { width: 100%; min-width: 0; max-width: 100%; }
+    #tutorial-card img { display: block; aspect-ratio: 16 / 9; object-fit: cover; object-position: top; }
     .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
@@ -168,7 +186,7 @@
 
     <!-- 懸浮頂部導覽列：縣市選項由 api_config.json 動態建立。 -->
     <header class="pointer-events-none absolute inset-x-0 top-0 z-[1000] p-3 sm:p-4">
-      <div class="pointer-events-auto mx-auto flex max-w-7xl items-center gap-2 rounded-lg border border-white/70 bg-white/95 p-2 shadow-float backdrop-blur-md sm:gap-4 sm:px-3">
+      <div class="pointer-events-auto mx-auto flex max-w-7xl items-center gap-1 rounded-lg border border-white/70 bg-white/95 p-2 shadow-float backdrop-blur-md sm:gap-4 sm:px-3">
         <div class="hidden min-w-0 items-center gap-3 sm:flex">
           <span class="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-brand-700 text-xl text-white" aria-hidden="true">⌖</span>
           <div class="min-w-0">
@@ -184,10 +202,12 @@
 
         <button id="related-links-button" type="button" class="inline-flex h-10 shrink-0 items-center rounded-md border border-slate-300 bg-white px-2 text-sm font-bold text-slate-800 transition hover:border-brand-600 sm:px-3 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-controls="related-links-modal" aria-expanded="false"><span class="hidden sm:inline">相關連結</span><span class="sm:hidden">連結</span></button>
 
-        <form id="map-search-form" class="relative flex h-10 min-w-[6rem] flex-1 sm:max-w-xs" role="search">
+        <button id="tutorial-button" type="button" class="inline-flex h-10 shrink-0 items-center rounded-md border border-slate-300 bg-white px-2 text-sm font-bold text-slate-800 transition hover:border-brand-600 sm:px-3 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-controls="tutorial-modal" aria-expanded="false"><span class="hidden sm:inline">使用教學</span><span class="sm:hidden">教學</span></button>
+
+        <form id="map-search-form" class="relative flex h-10 w-[25vw] min-w-[4rem] flex-none sm:w-auto sm:flex-1 sm:max-w-xs" role="search">
           <label for="map-search-input" class="sr-only">搜尋臺灣地點</label>
-          <input id="map-search-input" class="min-w-0 flex-1 rounded-l-md border border-r-0 border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-600 focus:ring-2 focus:ring-inset focus:ring-brand-100" type="search" maxlength="100" autocomplete="off" placeholder="搜尋臺灣地點" aria-controls="map-search-results" aria-expanded="false">
-          <button id="map-search-button" type="submit" class="shrink-0 rounded-r-md bg-brand-700 px-3 text-sm font-bold text-white hover:bg-brand-800 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-label="搜尋地點">搜尋</button>
+          <input id="map-search-input" class="min-w-0 flex-1 rounded-l-md border border-r-0 border-slate-300 bg-white px-2 text-sm outline-none focus:border-brand-600 focus:ring-2 focus:ring-inset focus:ring-brand-100 sm:px-3" type="search" maxlength="100" autocomplete="off" placeholder="搜尋臺灣地點" aria-controls="map-search-results" aria-expanded="false">
+          <button id="map-search-button" type="submit" class="shrink-0 rounded-r-md bg-brand-700 px-2 text-sm font-bold text-white hover:bg-brand-800 focus:outline-none focus:ring-2 focus:ring-brand-600 sm:px-3" aria-label="搜尋地點">搜尋</button>
           <div id="map-search-results" class="absolute right-0 top-[calc(100%+8px)] z-[1500] hidden max-h-80 w-[min(92vw,420px)] overflow-y-auto rounded-md border border-slate-200 bg-white p-2 shadow-panel" role="listbox" aria-label="地點搜尋結果"></div>
         </form>
 
@@ -198,7 +218,7 @@
           </select>
         </label>
 
-        <button id="share-button" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-300 bg-white text-lg text-brand-800 transition hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600" title="分享目前地圖" aria-label="分享目前地圖">↗</button>
+        <button id="share-button" type="button" class="hidden h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-300 bg-white text-lg text-brand-800 transition hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600 sm:grid" title="分享目前地圖" aria-label="分享目前地圖">↗</button>
         <button id="locate-button" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-300 bg-white text-xl text-brand-800 transition hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-600" title="重新定位" aria-label="重新定位">◎</button>
       </div>
     </header>
@@ -463,6 +483,49 @@
       </div>
     </div>
 
+    <!-- 使用教學以實際網站畫面搭配精簡步驟，桌機與手機皆可獨立捲動。 -->
+    <div id="tutorial-modal" class="absolute inset-0 z-[1450] hidden items-center justify-center bg-slate-950/55 p-2 opacity-0 backdrop-blur-sm transition-opacity duration-200 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="tutorial-title">
+      <div id="tutorial-card" class="flex max-h-[min(94dvh,900px)] w-full min-w-0 max-w-[calc(100vw-1rem)] translate-y-3 flex-col rounded-lg bg-white shadow-panel transition-transform duration-200 sm:max-w-4xl">
+        <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3 sm:px-5 sm:py-4">
+          <div>
+            <p class="text-xs font-bold text-brand-700">快速上手</p>
+            <h2 id="tutorial-title" class="mt-1 text-xl font-bold">網站使用教學</h2>
+          </div>
+          <button id="close-tutorial-button" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-md text-2xl text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-600" aria-label="關閉使用教學">×</button>
+        </div>
+        <div class="min-w-0 overflow-y-auto px-4 pb-5 sm:px-6">
+          <figure class="min-w-0 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-map-search.png" alt="網站地圖首頁，標示搜尋、定位、縣市選擇與交通圖層控制位置">
+            <figcaption class="mt-4">
+              <h3 class="text-base font-bold text-slate-950">1. 找到要查看的位置</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-600">允許定位即可前往目前位置，也能使用上方搜尋欄、縣市選單或重新定位按鈕。手動拖曳或縮放地圖後，停留 5 秒便會更新該地交通資料。</p>
+            </figcaption>
+          </figure>
+          <figure class="min-w-0 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-transport-layers.png" alt="地圖左上角的即時路況、公車動態、YouBike 站點與停車場圖層按鈕">
+            <figcaption class="mt-4">
+              <h3 class="text-base font-bold text-slate-950">2. 切換交通圖層</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-600">從左上角選擇即時路況、公車、YouBike 或停車場。YouBike 與停車場會以數量群組顯示，兩個圖層會互相切換，避免標記重疊。</p>
+            </figcaption>
+          </figure>
+          <figure class="min-w-0 border-b border-slate-200 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-bus-route.png" alt="選取公車後顯示完整站序、路線與行進方向箭頭的畫面">
+            <figcaption class="mt-4">
+              <h3 class="text-base font-bold text-slate-950">3. 查看公車路線與站序</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-600">開啟公車動態後點選車輛，即可看到目前方向的所有站牌；地圖上的淡紫色箭頭表示每一段路線的行進方向。</p>
+            </figcaption>
+          </figure>
+          <figure class="min-w-0 py-5">
+            <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-local-services.png" alt="網站服務選單，顯示收藏、通知、管理員與政府資料分類">
+            <figcaption class="mt-4">
+              <h3 class="text-base font-bold text-slate-950">4. 查詢地方資訊與常用服務</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-600">點選地圖任一位置可查看當地天氣、安全與生活資訊；「服務選單」可依分類開啟政府資料，也能管理收藏位置與通知。</p>
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+
     <!-- 分類 API 詳情 Modal。 -->
     <div id="category-modal" class="absolute inset-0 z-[1300] hidden items-center justify-center bg-slate-950/50 p-4 opacity-0 backdrop-blur-sm transition-opacity duration-200" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div id="modal-card" class="flex max-h-[min(88dvh,760px)] w-full max-w-2xl translate-y-3 flex-col rounded-lg bg-white shadow-panel transition-transform duration-200">
@@ -518,6 +581,8 @@
     const GEOLOCATION_FALLBACK_DELAY_MS = 10_000;
     const BUS_REFRESH_INTERVAL_MS = 12_000;
     const SLOW_TRANSPORT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+    const MANUAL_MAP_REFRESH_DELAY_MS = 5_000;
+    const MAP_CITY_SWITCH_BUFFER_METERS = 500;
     const PUBLIC_STATUS_REFRESH_INTERVAL_MS = 15_000;
     const TDX_DISABLED_MESSAGE = '管理員已關閉運輸資訊';
     const CWA_DISABLED_MESSAGE = '管理員已關閉天氣資訊';
@@ -545,6 +610,9 @@
       officialDataAbortController: null,
       transportAbortController: null,
       transportRefreshTimer: null,
+      manualMapMovementPending: false,
+      manualMapRefreshDueAt: 0,
+      programmaticMapMoveUntil: 0,
       transportRetryCount: 0,
       selectedTransportLocation: null,
       loadedBikeCityCode: null,
@@ -579,6 +647,7 @@
       savedPlaces: [],
       selectedBusStop: null,
       selectedBikeStation: null,
+      busDetailSequence: 0,
       savedPlaceLayer: null,
       busRouteLayer: null,
       currentCategory: null,
@@ -601,6 +670,10 @@
       menuButton: document.getElementById('menu-button'),
       relatedLinksButton: document.getElementById('related-links-button'),
       relatedLinksModal: document.getElementById('related-links-modal'),
+      tutorialButton: document.getElementById('tutorial-button'),
+      tutorialModal: document.getElementById('tutorial-modal'),
+      tutorialCard: document.getElementById('tutorial-card'),
+      closeTutorialButton: document.getElementById('close-tutorial-button'),
       adminButton: document.getElementById('admin-button'),
       adminModal: document.getElementById('admin-modal'),
       adminCard: document.getElementById('admin-card'),
@@ -750,7 +823,12 @@
       state.transportLayerControl = createTransportLayerControl();
       state.transportLayerControl.addTo(state.map);
       state.map.on('click', handleMapClick);
+      state.map.on('dragstart boxzoomstart', () => markManualMapMovement(true));
+      state.map.on('zoomstart', handleMapZoomStart);
+      state.map.on('move zoom', handleMapMovementProgress);
       state.map.on('moveend zoomend', handleMapViewportChanged);
+      state.map.getContainer().addEventListener('wheel', () => markManualMapMovement(true), { passive: true });
+      state.map.getContainer().addEventListener('keydown', handleMapKeyboardIntent, true);
       state.map.invalidateSize({ pan: false });
       state.map.whenReady(() => {
         state.map.invalidateSize({ pan: false });
@@ -783,8 +861,47 @@
       delays.forEach((delay) => window.setTimeout(() => scheduleMapResize(0), delay));
     }
 
+    function markProgrammaticMapMovement(durationMs = 0) {
+      state.programmaticMapMoveUntil = Date.now() + Math.max(500, durationMs + 500);
+      state.manualMapMovementPending = false;
+      state.manualMapRefreshDueAt = 0;
+      window.clearTimeout(state.transportRefreshTimer);
+    }
+
+    function markManualMapMovement(force = false) {
+      if (!force && Date.now() < state.programmaticMapMoveUntil) return;
+      state.manualMapMovementPending = true;
+      state.manualMapRefreshDueAt = Date.now() + MANUAL_MAP_REFRESH_DELAY_MS;
+      window.clearTimeout(state.transportRefreshTimer);
+      state.transportAbortController?.abort();
+      scheduleTransportLayerRefresh(MANUAL_MAP_REFRESH_DELAY_MS);
+    }
+
+    function handleMapZoomStart() {
+      if (Date.now() >= state.programmaticMapMoveUntil) markManualMapMovement();
+    }
+
+    function handleMapKeyboardIntent(event) {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', '+', '-', '=', '_'].includes(event.key)) {
+        markManualMapMovement(true);
+      }
+    }
+
+    function handleMapMovementProgress() {
+      if (state.manualMapMovementPending) {
+        state.manualMapRefreshDueAt = Date.now() + MANUAL_MAP_REFRESH_DELAY_MS;
+      }
+    }
+
+    function setMapView(center, zoom, options = {}) {
+      if (!state.map) return;
+      markProgrammaticMapMovement(options.animate === false ? 0 : 500);
+      state.map.setView(center, zoom, options);
+    }
+
     function flyMapTo(center, zoom, options = {}) {
       if (!state.map) return;
+      markProgrammaticMapMovement((Number(options.duration) || 0) * 1000);
       scheduleMapResize(0);
       state.map.once('moveend', () => refreshMapLayout([0, 100, 300]));
       state.map.flyTo(center, zoom, options);
@@ -892,7 +1009,7 @@
             .bindPopup('<strong>你的位置</strong>');
         }
         if (state.transportHasInitialized) flyMapTo(position, 16, { duration: 1.2 });
-        else state.map.setView(position, 16, { animate: false });
+        else setMapView(position, 16, { animate: false });
       }
       if (state.config) selectNearestCity(latitude, longitude);
       scheduleTransportLayerRefresh(0);
@@ -910,7 +1027,7 @@
       elements.locationStatus.textContent = `${reason}，已顯示台北 101`;
       if (state.map) {
         if (state.transportHasInitialized) flyMapTo(TAIPEI_101, FALLBACK_ZOOM, { duration: 1 });
-        else state.map.setView(TAIPEI_101, FALLBACK_ZOOM, { animate: false });
+        else setMapView(TAIPEI_101, FALLBACK_ZOOM, { animate: false });
         if (state.userMarker) {
           state.map.removeLayer(state.userMarker);
           state.userMarker = null;
@@ -1080,6 +1197,10 @@
       if (!state.map || !layer || !button) return;
       if (!visible) {
         state.map.removeLayer(layer);
+        if (layerKey === 'bus') {
+          state.busDetailSequence += 1;
+          state.busRouteLayer?.clearLayers();
+        }
         button.dataset.loading = 'false';
         button.setAttribute('aria-busy', 'false');
         button.setAttribute('aria-pressed', 'false');
@@ -1096,9 +1217,14 @@
       button.setAttribute('aria-pressed', 'true');
       button.setAttribute('aria-label', `${button.dataset.label}，目前顯示，點擊切換`);
       if (!state.locationResolved) return;
+      if (state.manualMapMovementPending) {
+        scheduleTransportLayerRefresh(Math.max(0, state.manualMapRefreshDueAt - Date.now()));
+        return;
+      }
       const loadingSequence = beginTransportLayerLoading(layerKey);
       const center = state.map.getCenter();
-      refreshTransportLayers(center.lat, center.lng, findNearestCityCode(center.lat, center.lng), {
+      const cityCode = findBufferedMapCityCode(center.lat, center.lng, state.selectedCityCode);
+      refreshTransportLayers(center.lat, center.lng, cityCode, {
         layers: [layerKey],
         force: true,
         loadingKeys: [layerKey],
@@ -1174,7 +1300,7 @@
     function syncMapCenterSelection(updateStatus = true) {
       if (!state.map || !state.config) return null;
       const center = state.map.getCenter();
-      const cityCode = findNearestCityCode(center.lat, center.lng);
+      const cityCode = findBufferedMapCityCode(center.lat, center.lng, state.selectedCityCode);
       state.selectedTransportLocation = [center.lat, center.lng];
       setSelectedCity(cityCode);
       if (updateStatus) {
@@ -1189,23 +1315,37 @@
         return;
       }
       syncMapCenterSelection();
-      scheduleTransportLayerRefresh();
+      if (state.manualMapMovementPending) {
+        state.manualMapRefreshDueAt = Date.now() + MANUAL_MAP_REFRESH_DELAY_MS;
+        scheduleTransportLayerRefresh(MANUAL_MAP_REFRESH_DELAY_MS);
+      } else {
+        scheduleTransportLayerRefresh();
+      }
     }
 
     function scheduleTransportLayerRefresh(delayMs = 800) {
       refreshMapLayout([0, 100]);
       if (!state.locationResolved) return;
       window.clearTimeout(state.transportRefreshTimer);
+      const effectiveDelay = state.manualMapMovementPending
+        ? Math.max(delayMs, state.manualMapRefreshDueAt - Date.now())
+        : delayMs;
       state.transportRefreshTimer = window.setTimeout(() => {
+        if (state.manualMapMovementPending && Date.now() < state.manualMapRefreshDueAt) {
+          scheduleTransportLayerRefresh(state.manualMapRefreshDueAt - Date.now());
+          return;
+        }
         if (!state.map || !state.config) return;
         const selection = syncMapCenterSelection(false);
         if (!selection) return;
         const { center, cityCode } = selection;
 
+        state.manualMapMovementPending = false;
+        state.manualMapRefreshDueAt = 0;
         state.transportHasInitialized = true;
         refreshTransportLayers(center.lat, center.lng, cityCode)
           .catch((error) => console.error('交通圖層更新失敗：', error));
-      }, delayMs);
+      }, effectiveDelay);
     }
 
     const PLACE_TYPE_LABELS = {
@@ -1260,7 +1400,7 @@
         goButton.className = 'min-w-0 flex-1';
         goButton.innerHTML = `<strong class="block truncate text-xs text-slate-800">${escapeHtml(PLACE_TYPE_LABELS[place.type] || '標註')}・${escapeHtml(place.name || '未命名')}</strong><span class="block text-[11px] text-slate-500">${Number(place.lat).toFixed(4)}, ${Number(place.lng).toFixed(4)}</span>`;
         goButton.addEventListener('click', () => {
-          state.map?.setView([place.lat, place.lng], Math.max(16, state.map.getZoom()), { animate: false });
+          setMapView([place.lat, place.lng], Math.max(16, state.map.getZoom()), { animate: false });
           closeMenu();
         });
         const removeButton = document.createElement('button');
@@ -1291,7 +1431,7 @@
         });
         L.marker([place.lat, place.lng], { icon, zIndexOffset: 700 })
           .bindTooltip(`${PLACE_TYPE_LABELS[place.type] || '標註'}・${place.name}`, { direction: 'top', offset: [0, -16] })
-          .on('click', () => state.map.setView([place.lat, place.lng], Math.max(16, state.map.getZoom())))
+          .on('click', () => setMapView([place.lat, place.lng], Math.max(16, state.map.getZoom())))
           .addTo(state.savedPlaceLayer);
       });
     }
@@ -1341,7 +1481,74 @@
       container.appendChild(section);
     }
 
+    function routeSegmentBearing(from, to) {
+      const toRadians = (degree) => degree * Math.PI / 180;
+      const fromLatitude = toRadians(from.lat);
+      const toLatitude = toRadians(to.lat);
+      const longitudeDelta = toRadians(to.lng - from.lng);
+      const y = Math.sin(longitudeDelta) * Math.cos(toLatitude);
+      const x = Math.cos(fromLatitude) * Math.sin(toLatitude)
+        - Math.sin(fromLatitude) * Math.cos(toLatitude) * Math.cos(longitudeDelta);
+      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+
+    function renderBusRouteOnMap(route) {
+      if (!state.busRouteLayer) return [];
+      const stops = (route.stops || [])
+        .filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lng))
+        .sort((left, right) => (Number(left.sequence) || Infinity) - (Number(right.sequence) || Infinity));
+      const points = stops.map((stop) => [stop.lat, stop.lng]);
+      if (points.length >= 2) {
+        L.polyline(points, {
+          color: '#7c3aed', weight: 5, opacity: 0.84, bubblingMouseEvents: false
+        }).bindTooltip(`${route.routeName}・${route.directionLabel}`, { sticky: true }).addTo(state.busRouteLayer);
+      }
+      stops.forEach((stop, index) => {
+        const sequence = stop.sequence || index + 1;
+        const isNext = route.nextStop?.stopUid === stop.stopUid;
+        const icon = L.divIcon({
+          className: 'bus-route-stop-icon',
+          html: `<span class="bus-route-stop-symbol${isNext ? ' is-next' : ''}">${sequence}</span>`,
+          iconSize: [27, 27], iconAnchor: [13.5, 13.5], popupAnchor: [0, -16]
+        });
+        L.marker([stop.lat, stop.lng], { icon, bubblingMouseEvents: false, zIndexOffset: isNext ? 720 : 680 })
+          .bindTooltip(`${sequence}. ${stop.stopName}`, { direction: 'top', offset: [0, -14] })
+          .addTo(state.busRouteLayer);
+      });
+      for (let index = 0; index < stops.length - 1; index += 1) {
+        const from = stops[index];
+        const to = stops[index + 1];
+        const distanceMeters = Math.round(haversineDistance(from.lat, from.lng, to.lat, to.lng) * 1000);
+        if (distanceMeters < 5) continue;
+        const midpoint = [(from.lat + to.lat) / 2, (from.lng + to.lng) / 2];
+        const rotation = routeSegmentBearing(from, to) - 90;
+        const segmentLabel = `${from.stopName}往${to.stopName}，約 ${distanceMeters} 公尺`;
+        const icon = L.divIcon({
+          className: 'bus-route-arrow-icon',
+          html: `<span class="bus-route-arrow-symbol" style="transform:rotate(${rotation.toFixed(1)}deg)" title="${escapeHtml(segmentLabel)}" aria-hidden="true">➤</span>`,
+          iconSize: [30, 30], iconAnchor: [15, 15]
+        });
+        L.marker(midpoint, { icon, interactive: false, keyboard: false, zIndexOffset: 650 })
+          .addTo(state.busRouteLayer);
+      }
+      return points;
+    }
+
+    function fitMapToBusRoute(points) {
+      if (!state.map || points.length < 2) return;
+      const desktop = window.matchMedia('(min-width: 768px)').matches;
+      markProgrammaticMapMovement(1_300);
+      state.map.fitBounds(L.latLngBounds(points), {
+        animate: true,
+        duration: 0.8,
+        maxZoom: 16,
+        paddingTopLeft: [42, 92],
+        paddingBottomRight: desktop ? [480, 42] : [42, Math.min(240, Math.round(window.innerHeight * 0.28))]
+      });
+    }
+
     async function showBusDetails(bus) {
+      const detailSequence = ++state.busDetailSequence;
       state.busRouteLayer?.clearLayers();
       openInfoPanel();
       elements.infoTitle.textContent = `${bus.routeName} 路線公車`;
@@ -1351,22 +1558,27 @@
           lat: bus.lat, lng: bus.lng, city: bus.portalCityCode || findNearestCityCode(bus.lat, bus.lng), routeName: bus.routeName,
           plateNumber: bus.plateNumber, direction: bus.direction ?? '', currentStopUid: bus.currentStopUid || ''
         });
+        if (detailSequence !== state.busDetailSequence) return;
         const wrapper = document.createElement('div');
         wrapper.appendChild(createReportParagraph(`車牌：${bus.plateNumber || '未提供'}｜${bus.status}｜速度：${Number.isFinite(bus.speed) ? `${bus.speed} km/h` : '未提供'}`, 'text-sm leading-6 text-slate-700'));
         state.busRouteLayer?.clearLayers();
+        const routePoints = [];
         (payload.data?.routes || []).forEach((route) => {
           renderRouteDetails(route, wrapper);
-          const line = route.stops.filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lng)).map((stop) => [stop.lat, stop.lng]);
-          if (line.length >= 2) L.polyline(line, { color: '#7c3aed', weight: 5, opacity: 0.8 }).addTo(state.busRouteLayer);
+          routePoints.push(...renderBusRouteOnMap(route));
         });
         if (!(payload.data?.routes || []).length) wrapper.appendChild(createReportParagraph('TDX 目前沒有提供此公車的站序資料。'));
         elements.infoContent.replaceChildren(wrapper);
+        fitMapToBusRoute(routePoints);
       } catch (error) {
+        if (detailSequence !== state.busDetailSequence) return;
         elements.infoContent.replaceChildren(createReportParagraph(`公車詳情讀取失敗：${error.message}`, 'rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800'));
       }
     }
 
     async function showBusStopDetails(stop) {
+      state.busDetailSequence += 1;
+      state.busRouteLayer?.clearLayers();
       state.selectedBusStop = stop;
       state.selectedBikeStation = null;
       openInfoPanel();
@@ -1402,6 +1614,8 @@
     }
 
     function showBikeDetails(station) {
+      state.busDetailSequence += 1;
+      state.busRouteLayer?.clearLayers();
       state.selectedBikeStation = station;
       state.selectedBusStop = null;
       openInfoPanel();
@@ -1452,14 +1666,14 @@
       const lng = Number(params.get('lng'));
       const zoom = Math.min(19, Math.max(7, Number(params.get('zoom')) || FALLBACK_ZOOM));
       if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= 21.5 && lat <= 26 && lng >= 119 && lng <= 122.5) {
-        state.map.setView([lat, lng], zoom, { animate: false });
+        setMapView([lat, lng], zoom, { animate: false });
       }
       const selectedLat = Number(params.get('selectedLat'));
       const selectedLng = Number(params.get('selectedLng'));
       if (params.get('busStop') && Number.isFinite(selectedLat) && Number.isFinite(selectedLng)) {
         showBusStopDetails({ stopUid: params.get('busStop'), stopUids: (params.get('busStopUids') || params.get('busStop')).split(','), stopName: params.get('busStopName') || '分享的公車站', lat: selectedLat, lng: selectedLng });
       } else if (params.get('bikeStation') && Number.isFinite(selectedLat) && Number.isFinite(selectedLng)) {
-        state.map.setView([selectedLat, selectedLng], Math.max(17, zoom), { animate: false });
+        setMapView([selectedLat, selectedLng], Math.max(17, zoom), { animate: false });
         showBikeDetails({ stationUid: params.get('bikeStation'), stationName: params.get('bikeStationName') || '分享的 U-Bike 站', lat: selectedLat, lng: selectedLng });
       }
     }
@@ -1553,7 +1767,7 @@
       const seconds = BUS_REFRESH_INTERVAL_MS / 1000;
       localStorage.setItem('smart-life-refresh-seconds', String(seconds));
       state.notificationTimer = window.setTimeout(async () => {
-        if (!document.hidden && state.map && state.config) {
+        if (!document.hidden && state.map && state.config && !state.manualMapMovementPending) {
           const selection = syncMapCenterSelection(false);
           if (selection) {
             const { center, cityCode } = selection;
@@ -1779,7 +1993,6 @@
         if (state.busStopLayer && !state.transportLayers.bus.hasLayer(state.busStopLayer)) state.transportLayers.bus.addLayer(state.busStopLayer);
         state.transportLayers.traffic.clearLayers();
         state.transportLayers.parking.clearLayers();
-        state.busRouteLayer?.clearLayers();
         state.loadedTransportCityCode = cityCode;
         state.loadedBusStopCityCode = null;
         state.lastRoadPayload = null;
@@ -1797,7 +2010,7 @@
         east: Math.min(TAIWAN_BOUNDS[1][1], bounds.getEast()),
         zoom: state.map.getZoom()
       };
-      const busParameters = { lat, lng, city: findNearestCityCode(lat, lng), radius: Math.min(50000, Math.max(1000, viewportRadius)) };
+      const busParameters = { lat, lng, city: cityCode, radius: Math.min(50000, Math.max(1000, viewportRadius)) };
       const tasks = [];
       let busRequest = null;
       let roadsRequest = null;
@@ -1913,6 +2126,8 @@
     // 點擊地圖後先辨識行政區，再將地方報導依主題資料夾完整展開。
     async function handleMapClick(event) {
       const { lat, lng } = event.latlng;
+      state.busDetailSequence += 1;
+      state.busRouteLayer?.clearLayers();
 
       addSavedPlace({ type: 'recent', name: `${lat.toFixed(4)}, ${lng.toFixed(4)}`, lat, lng, cityCode: findNearestCityCode(lat, lng) });
       const clickSequence = ++state.mapClickSequence;
@@ -1976,6 +2191,40 @@
         }
       });
       return nearestCode;
+    }
+
+    function destinationPoint(latitude, longitude, distanceMeters, bearingDegrees) {
+      const earthRadiusMeters = 6_371_000;
+      const angularDistance = distanceMeters / earthRadiusMeters;
+      const bearing = bearingDegrees * Math.PI / 180;
+      const startLatitude = latitude * Math.PI / 180;
+      const startLongitude = longitude * Math.PI / 180;
+      const destinationLatitude = Math.asin(
+        Math.sin(startLatitude) * Math.cos(angularDistance)
+        + Math.cos(startLatitude) * Math.sin(angularDistance) * Math.cos(bearing)
+      );
+      const destinationLongitude = startLongitude + Math.atan2(
+        Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(startLatitude),
+        Math.cos(angularDistance) - Math.sin(startLatitude) * Math.sin(destinationLatitude)
+      );
+      return {
+        lat: destinationLatitude * 180 / Math.PI,
+        lng: destinationLongitude * 180 / Math.PI
+      };
+    }
+
+    // 目前設定檔以縣市中心近似服務區；500 公尺圓周皆落入新區域後才切換。
+    function findBufferedMapCityCode(latitude, longitude, currentCityCode = state.selectedCityCode) {
+      const centerCityCode = findNearestCityCode(latitude, longitude);
+      const retainedCityCode = state.config?.cities?.[currentCityCode] ? currentCityCode : centerCityCode;
+      if (!centerCityCode || centerCityCode === retainedCityCode) return centerCityCode || retainedCityCode;
+      const surroundingPoints = Array.from({ length: 8 }, (_, index) => (
+        destinationPoint(latitude, longitude, MAP_CITY_SWITCH_BUFFER_METERS, index * 45)
+      ));
+      const isFullyInsideNewCity = surroundingPoints.every((point) => (
+        findNearestCityCode(point.lat, point.lng) === centerCityCode
+      ));
+      return isFullyInsideNewCity ? centerCityCode : retainedCityCode;
     }
 
     async function resolveLocalRegion(latitude, longitude) {
@@ -2560,6 +2809,28 @@
       elements.relatedLinksButton.focus();
     }
 
+    function openTutorial() {
+      elements.tutorialModal.classList.remove('hidden');
+      elements.tutorialModal.classList.add('flex');
+      requestAnimationFrame(() => {
+        elements.tutorialModal.classList.remove('opacity-0');
+        elements.tutorialCard.classList.remove('translate-y-3');
+      });
+      elements.tutorialButton.setAttribute('aria-expanded', 'true');
+      elements.closeTutorialButton.focus();
+    }
+
+    function closeTutorial() {
+      elements.tutorialModal.classList.add('opacity-0');
+      elements.tutorialCard.classList.add('translate-y-3');
+      elements.tutorialButton.setAttribute('aria-expanded', 'false');
+      window.setTimeout(() => {
+        elements.tutorialModal.classList.add('hidden');
+        elements.tutorialModal.classList.remove('flex');
+      }, 200);
+      elements.tutorialButton.focus();
+    }
+
     function closeMapSearchResults() {
       elements.mapSearchResults.classList.add('hidden');
       elements.mapSearchInput.setAttribute('aria-expanded', 'false');
@@ -2905,6 +3176,7 @@
       bindEventListener(elements.refreshIntervalSelect, 'change', schedulePeriodicUpdates, '#refresh-interval-select');
       bindEventListener(elements.menuButton, 'click', openMenu, '#menu-button');
       bindEventListener(elements.relatedLinksButton, 'click', openRelatedLinks, '#related-links-button');
+      bindEventListener(elements.tutorialButton, 'click', openTutorial, '#tutorial-button');
       bindEventListener(elements.adminButton, 'click', openAdminModal, '#admin-button');
       bindEventListener(elements.closeAdminButton, 'click', closeAdminModal, '#close-admin-button');
       bindEventListener(elements.adminModal, 'click', (event) => {
@@ -2922,6 +3194,10 @@
       bindEventListener(elements.relatedLinksModal, 'click', (event) => {
         if (event.target === elements.relatedLinksModal) closeRelatedLinks();
       }, '#related-links-modal');
+      bindEventListener(elements.closeTutorialButton, 'click', closeTutorial, '#close-tutorial-button');
+      bindEventListener(elements.tutorialModal, 'click', (event) => {
+        if (event.target === elements.tutorialModal) closeTutorial();
+      }, '#tutorial-modal');
       bindEventListener(elements.mapSearchForm, 'submit', searchMapLocation, '#map-search-form');
       bindEventListener(elements.mapSearchInput, 'input', () => {
         if (!elements.mapSearchInput.value.trim()) closeMapSearchResults();
@@ -2950,6 +3226,7 @@
       bindEventListener(document, 'keydown', (event) => {
         if (event.key !== 'Escape') return;
         if (!elements.adminModal?.classList.contains('hidden')) closeAdminModal();
+        else if (!elements.tutorialModal?.classList.contains('hidden')) closeTutorial();
         else if (!elements.relatedLinksModal?.classList.contains('hidden')) closeRelatedLinks();
         else if (!elements.mapSearchResults?.classList.contains('hidden')) closeMapSearchResults();
         else if (!elements.categoryModal?.classList.contains('hidden')) closeCategoryModal();

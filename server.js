@@ -1167,7 +1167,7 @@ function mapStopOfRoute(item, etaItems = [], plateNumber = '', currentStopUid = 
       arrivalLabel: busArrivalLabel(Number.isFinite(estimateTime) ? estimateTime : null, eta.StopStatus, eta.NextBusTime),
       nextBusTime: eta.NextBusTime || null
     };
-  });
+  }).sort((left, right) => (left.sequence || Infinity) - (right.sequence || Infinity));
   const nextStop = stops.find((stop) => currentStopUid && stop.stopUid === currentStopUid)
     || stops.filter((stop) => stop.isVehicleEstimate && Number.isFinite(stop.estimateSeconds) && stop.estimateSeconds >= 0)
       .sort((left, right) => left.estimateSeconds - right.estimateSeconds)[0]
@@ -1194,8 +1194,12 @@ async function fetchBusRouteDetails(city, routeName, plateNumber = '', preferred
   ]);
   const etaItems = asArray(etaPayload);
   const routes = asArray(stopPayload).map((item) => mapStopOfRoute(item, etaItems, plateNumber, currentStopUid));
-  routes.sort((left, right) => Number(left.direction !== preferredDirection) - Number(right.direction !== preferredDirection));
-  return routes;
+  const matchingRoutes = Number.isFinite(preferredDirection)
+    ? routes.filter((route) => route.direction === preferredDirection)
+    : routes;
+  const selectedRoutes = matchingRoutes.length ? matchingRoutes : routes;
+  selectedRoutes.sort((left, right) => Number(left.direction !== preferredDirection) - Number(right.direction !== preferredDirection));
+  return selectedRoutes;
 }
 
 async function proxyBusDetails(requestUrl, response) {
@@ -1205,7 +1209,8 @@ async function proxyBusDetails(requestUrl, response) {
     const city = requestedCity === 'InterCity' ? 'InterCity' : requireTdxCity(requestUrl.searchParams, lat, lng);
     const routeName = String(requestUrl.searchParams.get('routeName') || '').trim();
     const plateNumber = String(requestUrl.searchParams.get('plateNumber') || '').trim();
-    const directionValue = Number(requestUrl.searchParams.get('direction'));
+    const rawDirection = requestUrl.searchParams.get('direction');
+    const directionValue = rawDirection === null || rawDirection === '' ? NaN : Number(rawDirection);
     const currentStopUid = String(requestUrl.searchParams.get('currentStopUid') || '').trim();
     if (!routeName) throw new UpstreamError('routeName is required', 400);
     const routes = await fetchBusRouteDetails(city, routeName, plateNumber, Number.isFinite(directionValue) ? directionValue : null, currentStopUid);

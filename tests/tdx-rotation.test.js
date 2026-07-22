@@ -86,11 +86,25 @@ async function runScenario({ allRateLimited }) {
           RouteUID: 'R307',
           RouteName: { Zh_tw: '307' },
           Direction: 0,
+          Stops: [
+            {
+              StopUID: 'S003', StopName: { Zh_tw: '第三站' }, StopSequence: 3,
+              StopPosition: { PositionLat: 25.0432, PositionLon: 121.5756 }
+            },
+            {
+              StopUID: 'S001', StopName: { Zh_tw: '第一站' }, StopSequence: 1,
+              StopPosition: { PositionLat: 25.0332, PositionLon: 121.5656 }
+            },
+            {
+              StopUID: 'S002', StopName: { Zh_tw: '第二站' }, StopSequence: 2,
+              StopPosition: { PositionLat: 25.0382, PositionLon: 121.5706 }
+            }
+          ]
+        }, {
+          RouteUID: 'R307-RETURN', RouteName: { Zh_tw: '307' }, Direction: 1,
           Stops: [{
-            StopUID: 'S001',
-            StopName: { Zh_tw: '測試站' },
-            StopSequence: 1,
-            StopPosition: { PositionLat: 25.0332, PositionLon: 121.5656 }
+            StopUID: 'S101', StopName: { Zh_tw: '返程站' }, StopSequence: 1,
+            StopPosition: { PositionLat: 25.0432, PositionLon: 121.5756 }
           }]
         }]));
         return;
@@ -344,7 +358,9 @@ test('TDX credentials rotate on 429 and report only aggregate status', async () 
   assert.equal(result.calls.parkingAvailability, 1);
   assert.equal(result.busDetailResponse.status, 200);
   assert.equal(result.busDetailPayload.success, true);
+  assert.equal(result.busDetailPayload.data.routes.length, 1);
   assert.equal(result.busDetailPayload.data.routes[0].routeName, '307');
+  assert.deepEqual(result.busDetailPayload.data.routes[0].stops.map((stop) => stop.sequence), [1, 2, 3]);
   assert.ok(result.calls.detailFirst429 >= 1);
   assert.ok(result.calls.detailSecondSuccess >= 2);
   assert.equal(result.calls.generalCredentialOnBusDetail, 0);
