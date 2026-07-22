@@ -15,8 +15,10 @@
 ### 即時交通資訊
 
 - 整合 TDX 公車即時車機、站牌、到站預估、路線站序與公車詳情。
-- 後端集中維護 22 縣市及公路客運的全臺公車快照，每 15 秒啟動更新循環。
-- 單一來源更新失敗或遇到 TDX `429` 時，保留上一次成功資料，不會清空既有公車圖層。
+- 後端集中維護 22 縣市及公路客運的全臺公車快照，每 5 秒啟動更新循環。
+- 公車動態由後端每 5 秒更新共享快取；路況與 YouBike 每 5 分鐘更新，瀏覽器只讀取本站 API，不直接呼叫 TDX。
+- 支援多組 TDX 憑證；單組遇到 `429` 時自動切換下一組，全部額度用盡才回傳「請求過多，請稍後再試」。
+- 單一來源更新失敗時保留上一次成功資料，不會清空既有公車圖層。
 - 全臺快照儲存在記憶體與 JSON 檔案；地圖端只下載目前視窗附近的公車，降低手機渲染負擔。
 - 顯示 TDX 道路即時路況、道路速率及壅塞狀態。
 - 顯示 YouBike 站點、可借車輛、可還空位及服務狀態。
@@ -57,8 +59,9 @@
 2. 瀏覽器完成定位判定後，選擇使用者位置或台北 101。
 3. 設定檔與定位皆完成後，前端向同網域的 Node.js API 請求圖層資料。
 4. 後端代理 CWA、TDX、data.gov.tw、Nominatim 及 Overpass，並統一處理快取與錯誤。
-5. 全臺公車背景工作定期更新共享快照，所有使用者讀取同一份資料。
-6. 外部服務失敗時保留既有快取，讓地圖與其他功能仍可繼續使用。
+5. 後端每 5 秒更新公車動態，每 5 分鐘更新路況與 YouBike，所有使用者讀取同一份共享快取。
+6. TDX 單組憑證遇到 `429` 時依設定順序切換，只有全部憑證都被限流才進入「請求過多」錯誤或快取降級狀態。
+7. 外部服務失敗時保留既有快取，讓地圖與其他功能仍可繼續使用。
 
 ## 資料來源與限制
 
@@ -87,17 +90,42 @@
 | 環境變數 | 必要 | 用途 |
 | --- | --- | --- |
 | `CWA_API_KEY` | 是 | 中央氣象署 API 憑證 |
-| `TDX_CLIENT_ID` | 是 | TDX OAuth 用戶端 ID |
-| `TDX_CLIENT_SECRET` | 是 | TDX OAuth 用戶端密鑰 |
+| `TDX_CLIENT_ID` | 是 | 第一組 TDX OAuth 用戶端 ID |
+| `TDX_CLIENT_SECRET` | 是 | 第一組 TDX OAuth 用戶端密鑰 |
+| `TDX_CLIENT_ID_2`、`TDX_CLIENT_SECRET_2` | 否 | 第二組 TDX 憑證 |
+| `TDX_CLIENT_ID_3`、`TDX_CLIENT_SECRET_3` | 否 | 第三組 TDX 憑證 |
+| `TDX_CLIENT_ID_4`、`TDX_CLIENT_SECRET_4` | 否 | 第四組 TDX 憑證 |
+| `TDX_CLIENT_ID_5`、`TDX_CLIENT_SECRET_5` | 否 | 第五組 TDX 憑證；也可繼續增加編號 |
+| `TDX_CREDENTIALS_JSON` | 否 | 多組憑證 JSON 陣列或物件，欄位使用 `clientId` 與 `clientSecret` |
+| `TDX_REFRESH_INTERVAL_MS` | 否 | 公車動態與背景排程間隔，預設 `5000` 毫秒 |
+| `TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS` | 否 | 路況與 YouBike 更新間隔，預設 `300000` 毫秒 |
 | `CWA_DATASET_IDS` | 否 | CWA 備援資料集 ID，以逗號分隔 |
 | `BUS_REALTIME_CACHE_FILE` | 否 | 全臺公車快照儲存路徑 |
 
 Render 會自動提供 `PORT`，伺服器已監聽 `0.0.0.0`，不需要手動指定連接埠。若使用 Render Persistent Disk，建議掛載至 `/var/data`，並設定 `BUS_REALTIME_CACHE_FILE=/var/data/bus_realtime_cache.json`。
 
+五組 TDX 帳號請在 Render 的 Environment 頁面分別新增以下 Key；Value 填入各組實際帳號與密鑰：
+
+```text
+TDX_CLIENT_ID
+TDX_CLIENT_SECRET
+TDX_CLIENT_ID_2
+TDX_CLIENT_SECRET_2
+TDX_CLIENT_ID_3
+TDX_CLIENT_SECRET_3
+TDX_CLIENT_ID_4
+TDX_CLIENT_SECRET_4
+TDX_CLIENT_ID_5
+TDX_CLIENT_SECRET_5
+```
+
+更新間隔已有正確預設值；除非要覆寫，不必在 Render 設定 `TDX_REFRESH_INTERVAL_MS` 或 `TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS`。
+
 ## API 與安全性
 
 - `GET /api/status`：檢查服務及環境變數設定狀態，不回傳憑證內容。
 - `GET /api/tdx/bus?scope=all`：取得目前已儲存的全臺公車快照。
+- `/api/status` 只回傳 TDX 憑證總數及目前可用組數，不會回傳帳號、密鑰或 token。
 - 地圖使用的交通 API 支援座標與範圍過濾，避免傳輸不必要的大量資料。
 - 靜態伺服器採公開檔案白名單，`.env`、`server.js`、日誌及憑證範本無法透過 HTTP 下載。
 - `.env`、執行日誌及公車即時快照均已列入 `.gitignore`，不會上傳到 GitHub。

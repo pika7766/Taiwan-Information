@@ -232,9 +232,9 @@
             <button id="save-center-button" type="button" class="h-10 rounded-md bg-brand-700 px-3 text-sm font-bold text-white hover:bg-brand-800">標註地圖中心</button>
           </div>
           <div class="mt-3 flex items-center gap-2">
-            <label for="refresh-interval-select" class="shrink-0 text-xs font-bold text-slate-600">更新頻率</label>
+            <label for="refresh-interval-select" class="shrink-0 text-xs font-bold text-slate-600">公車更新頻率</label>
             <select id="refresh-interval-select" class="h-9 min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-2 text-sm">
-              <option value="15">15 秒</option>
+              <option value="5">5 秒</option>
             </select>
             <button id="notification-button" type="button" class="h-9 rounded-md border border-slate-300 bg-white px-3 text-xs font-bold hover:bg-slate-50">開啟通知</button>
           </div>
@@ -453,6 +453,8 @@
     const TAIPEI_101 = [25.0336, 121.5648];
     const FALLBACK_ZOOM = 16;
     const TAIWAN_BOUNDS = [[21.5, 119.0], [26.0, 122.5]];
+    const BUS_REFRESH_INTERVAL_MS = 5_000;
+    const TRAFFIC_BIKE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
     const state = {
       config: null,
       selectedCityCode: null,
@@ -481,6 +483,7 @@
       lastRoadPayload: null,
       lastTrafficPayload: null,
       lastTransportFetch: { roads: null, traffic: null, bike: null },
+      nextTrafficBikeRefreshAt: Date.now() + TRAFFIC_BIKE_REFRESH_INTERVAL_MS,
       transportLayers: null,
       busVehicleLayer: null,
       busStopLayer: null,
@@ -1072,8 +1075,8 @@
         state.savedPlaces = [];
         console.error('讀取收藏位置失敗：', error);
       }
-      localStorage.setItem('smart-life-refresh-seconds', '15');
-      elements.refreshIntervalSelect.value = '15';
+      localStorage.setItem('smart-life-refresh-seconds', '5');
+      elements.refreshIntervalSelect.value = '5';
       elements.refreshIntervalSelect.disabled = true;
       renderSavedPlaces();
       schedulePeriodicUpdates();
@@ -1402,14 +1405,22 @@
 
     function schedulePeriodicUpdates() {
       window.clearTimeout(state.notificationTimer);
-      const seconds = 15;
+      const seconds = BUS_REFRESH_INTERVAL_MS / 1000;
       localStorage.setItem('smart-life-refresh-seconds', String(seconds));
       state.notificationTimer = window.setTimeout(async () => {
         if (!document.hidden && state.map && state.config) {
           const selection = syncMapCenterSelection(false);
           if (selection) {
             const { center, cityCode } = selection;
-            const updates = [refreshTransportLayers(center.lat, center.lng, cityCode, { layers: ['bus'] })];
+            const layers = ['bus'];
+            if (Date.now() >= state.nextTrafficBikeRefreshAt) {
+              layers.push('traffic', 'bike');
+              state.nextTrafficBikeRefreshAt = Date.now() + TRAFFIC_BIKE_REFRESH_INTERVAL_MS;
+            }
+            const updates = [refreshTransportLayers(center.lat, center.lng, cityCode, {
+              layers,
+              forceTdx: true
+            })];
             if (Date.now() - state.lastFavoriteRefreshAt >= 5 * 60 * 1000) {
               state.lastFavoriteRefreshAt = Date.now();
               updates.push(refreshFavoriteNotifications());
@@ -1419,7 +1430,7 @@
         }
         schedulePeriodicUpdates();
       }, seconds * 1000);
-      if (elements.personalStatus) elements.personalStatus.textContent = `全臺公車快照每 ${seconds} 秒更新；收藏站點依通知節流更新。`;
+      if (elements.personalStatus) elements.personalStatus.textContent = `公車動態每 ${seconds} 秒更新；路況與 YouBike 每 5 分鐘更新。`;
     }
 
     function renderBusLayer(payload) {
@@ -1528,6 +1539,7 @@
       if (!state.locationResolved || !state.transportLayers || !cityCode || !state.map) return;
       const requestedLayers = new Set(options.layers || ['traffic', 'bus', 'bike']);
       const force = options.force === true;
+      const forceTdx = options.forceTdx === true;
       const isActive = (layerKey) => requestedLayers.has(layerKey)
         && (force || state.map.hasLayer(state.transportLayers[layerKey]));
       const now = Date.now();
@@ -1543,11 +1555,11 @@
       const shouldLoadRoads = isActive('traffic') && (force || cityChanged || !state.lastRoadPayload
         || distanceFrom(roadRecord) >= 1500 || roadRecord?.zoom !== state.map.getZoom()
         || now - (roadRecord?.at || 0) >= 10 * 60 * 1000);
-      const shouldLoadTraffic = isActive('traffic') && (force || cityChanged || !state.lastTrafficPayload
+      const shouldLoadTraffic = isActive('traffic') && (force || forceTdx || cityChanged || !state.lastTrafficPayload
         || distanceFrom(trafficRecord) >= 3000 || now - (trafficRecord?.at || 0) >= 5 * 60 * 1000);
       const bikeDatasetKey = `CITY:${cityCode}`;
-      const shouldLoadBike = isActive('bike') && (force || cityChanged || state.loadedBikeCityCode !== bikeDatasetKey
-        || distanceFrom(bikeRecord) >= 8000 || now - (bikeRecord?.at || 0) >= 15 * 60 * 1000);
+      const shouldLoadBike = isActive('bike') && (force || forceTdx || cityChanged || state.loadedBikeCityCode !== bikeDatasetKey
+        || distanceFrom(bikeRecord) >= 8000 || now - (bikeRecord?.at || 0) >= 5 * 60 * 1000);
       const actualLoadingKeys = new Set(options.loadingKeys || []);
       if (shouldLoadBus) actualLoadingKeys.add('bus');
       if (shouldLoadRoads || shouldLoadTraffic) actualLoadingKeys.add('traffic');
@@ -1827,7 +1839,7 @@
       }
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.success) {
-        const message = response.status === 429 ? '請求過於頻繁，請稍後再試' : (payload.message || `HTTP ${response.status}`);
+        const message = response.status === 429 ? '請求過多，請稍後再試' : (payload.message || `HTTP ${response.status}`);
         if (response.status === 429) showRequestMessage(message);
         const error = new Error(message);
         error.status = response.status;

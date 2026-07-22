@@ -8,7 +8,6 @@ const ROOT = __dirname;
 const ENV_FILE = path.join(ROOT, '.env');
 const BIKE_STATION_CACHE_FILE = path.join(ROOT, 'bike_station_cache.json');
 const BUS_REALTIME_CACHE_FILE = process.env.BUS_REALTIME_CACHE_FILE || path.join(ROOT, 'bus_realtime_cache.json');
-const BUS_REFRESH_INTERVAL_MS = 15_000;
 
 function loadEnvironmentFile(filePath) {
   if (!fs.existsSync(filePath)) return false;
@@ -29,7 +28,22 @@ function loadEnvironmentFile(filePath) {
   return true;
 }
 
-const environmentFileLoaded = loadEnvironmentFile(ENV_FILE);
+const environmentFileLoaded = process.env.SKIP_ENV_FILE !== 'true' && loadEnvironmentFile(ENV_FILE);
+const TDX_REFRESH_INTERVAL_MS = Math.max(1_000, Number(process.env.TDX_REFRESH_INTERVAL_MS) || 5_000);
+const TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS = Math.max(
+  TDX_REFRESH_INTERVAL_MS,
+  Number(process.env.TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS) || 5 * 60 * 1000
+);
+const TDX_ACTIVE_CACHE_WINDOW_MS = Math.max(
+  TDX_REFRESH_INTERVAL_MS * 3,
+  Number(process.env.TDX_ACTIVE_CACHE_WINDOW_MS) || 30_000
+);
+const TDX_RATE_LIMIT_COOLDOWN_MS = Math.max(
+  TDX_REFRESH_INTERVAL_MS,
+  Number(process.env.TDX_RATE_LIMIT_COOLDOWN_MS) || 15 * 60 * 1000
+);
+const TDX_REQUEST_SPACING_MS = Math.max(0, Number(process.env.TDX_REQUEST_SPACING_MS) || 600);
+const BUS_REFRESH_INTERVAL_MS = TDX_REFRESH_INTERVAL_MS;
 const PORTAL_CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, 'api_config.json'), 'utf8').replace(/^\uFEFF/, ''));
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT) || 4174;
@@ -52,7 +66,7 @@ const CWA_WEEKLY_DATASET_BY_CITY = {
 const CWA_DISTRICT_ALIASES = {
   臺北市: { 興雅: '信義區', 三張犁: '信義區', 西村里: '信義區' }
 };
-const TDX_API_ROOT = 'https://tdx.transportdata.tw/api/basic';
+const TDX_API_ROOT = process.env.TDX_API_ROOT || 'https://tdx.transportdata.tw/api/basic';
 const TDX_CITY_BY_PORTAL_CODE = {
   Taipei: 'Taipei', NewTaipei: 'NewTaipei', Keelung: 'Keelung', Taoyuan: 'Taoyuan',
   HsinchuCity: 'Hsinchu', HsinchuCounty: 'HsinchuCounty', Miaoli: 'MiaoliCounty', Taichung: 'Taichung',
@@ -61,7 +75,8 @@ const TDX_CITY_BY_PORTAL_CODE = {
   Yilan: 'YilanCounty', Hualien: 'HualienCounty', Taitung: 'TaitungCounty', Penghu: 'PenghuCounty',
   Kinmen: 'KinmenCounty', Matsu: 'LienchiangCounty'
 };
-const TDX_TOKEN_ENDPOINT = 'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
+const TDX_TOKEN_ENDPOINT = process.env.TDX_TOKEN_ENDPOINT
+  || 'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
 const NOMINATIM_ENDPOINT = 'https://nominatim.openstreetmap.org/reverse';
 const NOMINATIM_SEARCH_ENDPOINT = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS_ENDPOINT = 'https://overpass-api.de/api/interpreter';
@@ -87,7 +102,8 @@ const PUBLIC_STATIC_FILES = new Set([
   'leaflet.markercluster.js', 'MarkerCluster.css', 'MarkerCluster.Default.css'
 ]);
 
-let tdxTokenCache = { token: '', expiresAt: 0 };
+const tdxCredentials = loadTdxCredentials();
+let activeTdxCredentialIndex = 0;
 let bikeStationDiskCache = [];
 let nationwideBusSnapshot = {
   observedAt: null,
@@ -132,10 +148,11 @@ try {
 const tdxResponseCache = new Map();
 const roadNetworkCache = new Map();
 const geocodeSearchCache = new Map();
-const TDX_RESPONSE_CACHE_MS = 20_000;
+const TDX_RESPONSE_CACHE_MS = TDX_REFRESH_INTERVAL_MS;
 let tdxRequestQueue = Promise.resolve();
 let lastTdxRequestAt = 0;
-let tdxRateLimitedUntil = 0;
+let tdxCacheRefreshPromise = null;
+let tdxCacheRefreshTimer = null;
 
 class UpstreamError extends Error {
   constructor(message, status = 502, details = '') {
@@ -166,7 +183,7 @@ function sendJson(response, status, payload, extraHeaders = {}) {
 
 function sendApiError(response, error) {
   const status = error instanceof UpstreamError ? error.status : 500;
-  const message = status === 429 ? '請求過於頻繁，請稍後再試' : error.message;
+  const message = status === 429 ? '請求過多，請稍後再試' : error.message;
   console.error('API request failed:', error);
   sendJson(response, status, {
     success: false,
@@ -195,11 +212,13 @@ async function fetchJson(url, options = {}, timeoutMs = 20_000) {
     const response = await fetch(url, { ...options, signal: controller.signal });
     const text = await response.text();
     if (!response.ok) {
-      throw new UpstreamError(
+      const upstreamError = new UpstreamError(
         `Official service returned HTTP ${response.status} ${response.statusText}`.trim(),
         response.status >= 400 && response.status < 500 ? response.status : 502,
         text.slice(0, 1000)
       );
+      upstreamError.retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+      throw upstreamError;
     }
     try {
       return JSON.parse(text);
@@ -220,26 +239,81 @@ function requiredEnvironment(name) {
   return value;
 }
 
-async function getTdxToken() {
-  if (tdxTokenCache.token && Date.now() < tdxTokenCache.expiresAt - 60_000) return tdxTokenCache.token;
-  const clientId = requiredEnvironment('TDX_CLIENT_ID');
-  const clientSecret = requiredEnvironment('TDX_CLIENT_SECRET');
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: clientId,
-    client_secret: clientSecret
-  });
-  const payload = await fetchJson(TDX_TOKEN_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-    body
-  });
-  if (!payload.access_token) throw new UpstreamError('TDX token response did not include access_token', 502);
-  tdxTokenCache = {
-    token: payload.access_token,
-    expiresAt: Date.now() + Number(payload.expires_in || 900) * 1000
+function parseRetryAfterMs(value) {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+}
+
+function loadTdxCredentials() {
+  const definitions = [];
+  const addCredential = (clientId, clientSecret, label) => {
+    const normalizedId = String(clientId || '').trim();
+    const normalizedSecret = String(clientSecret || '').trim();
+    if (!normalizedId || !normalizedSecret) return;
+    if (definitions.some((item) => item.clientId === normalizedId && item.clientSecret === normalizedSecret)) return;
+    definitions.push({ clientId: normalizedId, clientSecret: normalizedSecret, label });
   };
-  return tdxTokenCache.token;
+
+  addCredential(process.env.TDX_CLIENT_ID, process.env.TDX_CLIENT_SECRET, 'default');
+  const numberedIndexes = new Set(Object.keys(process.env).flatMap((name) => {
+    const match = name.match(/^TDX_CLIENT_(?:ID|SECRET)_(\d+)$/);
+    return match ? [Number(match[1])] : [];
+  }));
+  [...numberedIndexes].sort((left, right) => left - right).forEach((index) => {
+    addCredential(process.env[`TDX_CLIENT_ID_${index}`], process.env[`TDX_CLIENT_SECRET_${index}`], `credential-${index}`);
+  });
+
+  if (process.env.TDX_CREDENTIALS_JSON) {
+    try {
+      const parsed = JSON.parse(process.env.TDX_CREDENTIALS_JSON);
+      const isSingleCredential = parsed && typeof parsed === 'object'
+        && (parsed.clientId || parsed.client_id || parsed.id);
+      const entries = Array.isArray(parsed) ? parsed : isSingleCredential ? [parsed] : Object.values(parsed || {});
+      entries.forEach((item, index) => addCredential(
+        item?.clientId || item?.client_id || item?.id,
+        item?.clientSecret || item?.client_secret || item?.secret,
+        `json-${index + 1}`
+      ));
+    } catch (error) {
+      console.error('Unable to parse TDX_CREDENTIALS_JSON:', error.message);
+    }
+  }
+
+  return definitions.map((definition, index) => ({
+    ...definition,
+    index,
+    token: '',
+    expiresAt: 0,
+    tokenPromise: null,
+    rateLimitedUntil: 0
+  }));
+}
+
+async function getTdxToken(credential) {
+  if (credential.token && Date.now() < credential.expiresAt - 60_000) return credential.token;
+  if (credential.tokenPromise) return credential.tokenPromise;
+  credential.tokenPromise = (async () => {
+    const body = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: credential.clientId,
+      client_secret: credential.clientSecret
+    });
+    const payload = await fetchJson(TDX_TOKEN_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body
+    });
+    if (!payload.access_token) throw new UpstreamError('TDX token response did not include access_token', 502);
+    credential.token = payload.access_token;
+    credential.expiresAt = Date.now() + Number(payload.expires_in || 900) * 1000;
+    return credential.token;
+  })().finally(() => {
+    credential.tokenPromise = null;
+  });
+  return credential.tokenPromise;
 }
 
 function requireTaiwanCoordinates(searchParams) {
@@ -281,9 +355,15 @@ function tdxCityUrl(pathname, city, parameters = {}) {
   return url;
 }
 
+function tdxRefreshIntervalForUrl(url) {
+  return /\/v\d+\/(?:Bike|Road\/Traffic)\//.test(url.pathname)
+    ? TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS
+    : TDX_REFRESH_INTERVAL_MS;
+}
+
 function queueTdxRequest(task) {
   const run = tdxRequestQueue.then(async () => {
-    const waitMs = Math.max(0, 600 - (Date.now() - lastTdxRequestAt));
+    const waitMs = Math.max(0, TDX_REQUEST_SPACING_MS - (Date.now() - lastTdxRequestAt));
     if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
     try {
       return await task();
@@ -295,53 +375,166 @@ function queueTdxRequest(task) {
   return run;
 }
 
-async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS) {
-  const key = url.toString();
-  const cached = tdxResponseCache.get(key);
-  if (cached?.data && Date.now() < cached.expiresAt) return cached.data;
-  if (cached?.pending) return cached.pending;
-  if (Date.now() < tdxRateLimitedUntil) {
-    if (cached?.data) return cached.data;
-    throw new UpstreamError('TDX basic plan rate limit is temporarily active', 429);
+function markTdxCredentialRateLimited(credential, error) {
+  const cooldownMs = error.retryAfterMs || TDX_RATE_LIMIT_COOLDOWN_MS;
+  credential.rateLimitedUntil = Date.now() + Math.max(TDX_REFRESH_INTERVAL_MS, cooldownMs);
+  credential.token = '';
+  credential.expiresAt = 0;
+  activeTdxCredentialIndex = (credential.index + 1) % tdxCredentials.length;
+  console.warn(`TDX ${credential.label} reached HTTP 429; switching to the next configured credential.`);
+}
+
+function areAllTdxCredentialsRateLimited() {
+  return tdxCredentials.length > 0
+    && tdxCredentials.every((credential) => Date.now() < credential.rateLimitedUntil);
+}
+
+async function requestTdxUrl(url) {
+  if (!tdxCredentials.length) {
+    throw new UpstreamError('No complete TDX credential pair is configured', 503);
   }
 
-  const pending = (async () => {
-    const token = await getTdxToken();
+  let lastError = null;
+  const startingCredentialIndex = activeTdxCredentialIndex;
+  for (let offset = 0; offset < tdxCredentials.length; offset += 1) {
+    const index = (startingCredentialIndex + offset) % tdxCredentials.length;
+    const credential = tdxCredentials[index];
+    if (Date.now() < credential.rateLimitedUntil) continue;
+
+    let token;
+    try {
+      token = await getTdxToken(credential);
+    } catch (error) {
+      lastError = error;
+      if (error.status === 429) {
+        markTdxCredentialRateLimited(credential, error);
+        continue;
+      }
+      if ([400, 401, 403].includes(error.status)) {
+        console.error(`TDX ${credential.label} authentication failed; trying the next credential.`);
+        continue;
+      }
+      throw error;
+    }
+
     try {
       const data = await queueTdxRequest(() => fetchJson(url, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
       }, 60_000));
-      tdxResponseCache.set(key, { data, expiresAt: Date.now() + cacheMs });
+      activeTdxCredentialIndex = index;
       return data;
     } catch (error) {
+      lastError = error;
       if (error.status === 429) {
-        tdxRateLimitedUntil = Date.now() + 15 * 60 * 1000;
-        if (cached?.data) return cached.data;
+        markTdxCredentialRateLimited(credential, error);
+        continue;
+      }
+      if ([401, 403].includes(error.status)) {
+        credential.token = '';
+        credential.expiresAt = 0;
+        console.error(`TDX ${credential.label} access token was rejected; trying the next credential.`);
+        continue;
       }
       throw error;
     }
-  })();
-  tdxResponseCache.set(key, { ...cached, pending });
+  }
+
+  if (areAllTdxCredentialsRateLimited()) {
+    throw new UpstreamError('All configured TDX credentials are rate limited', 429);
+  }
+  throw lastError || new UpstreamError('No TDX credential is currently available', 503);
+}
+
+async function refreshTdxCacheEntry(entry) {
+  if (entry.pending) return entry.pending;
+  entry.pending = (async () => {
+    const data = await requestTdxUrl(entry.url);
+    entry.data = data;
+    entry.updatedAt = Date.now();
+    entry.expiresAt = entry.updatedAt + entry.refreshIntervalMs;
+    return data;
+  })().finally(() => {
+    entry.pending = null;
+  });
+  return entry.pending;
+}
+
+async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
+  const key = url.toString();
+  let entry = tdxResponseCache.get(key);
+  if (!entry) {
+    entry = {
+      url: new URL(key),
+      data: null,
+      pending: null,
+      updatedAt: 0,
+      expiresAt: 0,
+      lastAccessAt: 0,
+      cacheMs,
+      refreshIntervalMs: options.refreshIntervalMs || tdxRefreshIntervalForUrl(url),
+      backgroundRefresh: options.backgroundRefresh !== false
+    };
+    tdxResponseCache.set(key, entry);
+  } else {
+    entry.cacheMs = cacheMs;
+    if (options.refreshIntervalMs) entry.refreshIntervalMs = options.refreshIntervalMs;
+    if (options.backgroundRefresh !== undefined) entry.backgroundRefresh = options.backgroundRefresh;
+  }
+  if (options.trackActivity !== false) entry.lastAccessAt = Date.now();
+
+  if (entry.data && options.forceRefresh !== true) {
+    if (Date.now() < entry.updatedAt + entry.refreshIntervalMs) return entry.data;
+    try {
+      return await refreshTdxCacheEntry(entry);
+    } catch (error) {
+      return entry.data;
+    }
+  }
   try {
-    return await pending;
+    return await refreshTdxCacheEntry(entry);
   } catch (error) {
-    if (cached?.data) tdxResponseCache.set(key, cached);
-    else tdxResponseCache.delete(key);
+    if (!entry.data) tdxResponseCache.delete(key);
     throw error;
   }
 }
 
-async function fetchTdxCity(pathname, city, parameters = {}, cacheMs = TDX_RESPONSE_CACHE_MS) {
-  return fetchTdxUrl(tdxCityUrl(pathname, city, parameters), cacheMs);
+async function refreshActiveTdxCache() {
+  if (tdxCacheRefreshPromise) return tdxCacheRefreshPromise;
+  const now = Date.now();
+  const entries = [...tdxResponseCache.values()]
+    .filter((entry) => entry.backgroundRefresh
+      && entry.lastAccessAt >= now - Math.max(
+        TDX_ACTIVE_CACHE_WINDOW_MS,
+        entry.refreshIntervalMs + TDX_REFRESH_INTERVAL_MS * 2
+      )
+      && now >= entry.updatedAt + entry.refreshIntervalMs);
+  if (!entries.length) return [];
+
+  tdxCacheRefreshPromise = Promise.allSettled(entries.map((entry) => refreshTdxCacheEntry(entry)))
+    .finally(() => {
+      tdxCacheRefreshPromise = null;
+    });
+  return tdxCacheRefreshPromise;
 }
 
-async function fetchTdxCityRoute(pathname, city, routeName, parameters = {}, cacheMs = TDX_RESPONSE_CACHE_MS) {
+function startTdxCacheRefresh() {
+  tdxCacheRefreshTimer = setInterval(() => {
+    refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message));
+  }, TDX_REFRESH_INTERVAL_MS);
+  tdxCacheRefreshTimer.unref?.();
+}
+
+async function fetchTdxCity(pathname, city, parameters = {}, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
+  return fetchTdxUrl(tdxCityUrl(pathname, city, parameters), cacheMs, options);
+}
+
+async function fetchTdxCityRoute(pathname, city, routeName, parameters = {}, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
   const url = new URL(`${TDX_API_ROOT}/${pathname}/${city}/${encodeURIComponent(routeName)}`);
   Object.entries(parameters).forEach(([name, value]) => {
     if (value !== null && value !== undefined && value !== '') url.searchParams.set(name, value);
   });
   url.searchParams.set('$format', 'JSON');
-  return fetchTdxUrl(url, cacheMs);
+  return fetchTdxUrl(url, cacheMs, options);
 }
 
 function coordinateBoxFilter(positionField, lat, lng, radiusMeters = 600) {
@@ -892,12 +1085,16 @@ function nationwideBusSources() {
 
 async function fetchNationwideBusSource(source) {
   if (!source.interCity) {
-    return fetchTdxCity('v2/Bus/RealTimeByFrequency/City', source.tdxCity, { '$top': 10000 }, 0);
+    return fetchTdxCity('v2/Bus/RealTimeByFrequency/City', source.tdxCity, { '$top': 10000 }, 0, {
+      forceRefresh: true,
+      backgroundRefresh: false,
+      trackActivity: false
+    });
   }
   const url = new URL(`${TDX_API_ROOT}/v2/Bus/RealTimeByFrequency/InterCity`);
   url.searchParams.set('$top', '10000');
   url.searchParams.set('$format', 'JSON');
-  return fetchTdxUrl(url, 0);
+  return fetchTdxUrl(url, 0, { forceRefresh: true, backgroundRefresh: false, trackActivity: false });
 }
 
 async function refreshNationwideBusSnapshot() {
@@ -956,6 +1153,7 @@ function startNationwideBusRefresh() {
 async function proxyBus(requestUrl, response) {
   const scope = requestUrl.searchParams.get('scope') || 'nearby';
   const allBuses = Object.values(nationwideBusSnapshot.byCity).flat();
+  const rateLimited = areAllTdxCredentialsRateLimited();
   let data = allBuses;
   if (scope !== 'all') {
     try {
@@ -975,7 +1173,7 @@ async function proxyBus(requestUrl, response) {
   }
   sendJson(response, 200, {
     success: true,
-    degraded: nationwideBusSnapshot.unavailableCities.length > 0,
+    degraded: rateLimited || nationwideBusSnapshot.unavailableCities.length > 0,
     refreshing: Boolean(nationwideBusRefreshPromise),
     source: '交通部 TDX 全臺公車車機動態快照',
     observedAt: nationwideBusSnapshot.observedAt,
@@ -985,9 +1183,11 @@ async function proxyBus(requestUrl, response) {
     totalBuses: allBuses.length,
     cityCounts: Object.fromEntries(Object.entries(nationwideBusSnapshot.byCity).map(([city, buses]) => [city, buses.length])),
     unavailableCities: nationwideBusSnapshot.unavailableCities,
-    message: nationwideBusSnapshot.unavailableCities.length
-      ? '部分縣市本次更新失敗，保留上一次成功快照'
-      : null,
+    message: rateLimited
+      ? '請求過多，請稍後再試'
+      : nationwideBusSnapshot.unavailableCities.length
+        ? '部分縣市本次更新失敗，保留上一次成功快照'
+        : null,
     data
   });
 }
@@ -1018,7 +1218,7 @@ async function proxyBusStops(requestUrl, response) {
       sendJson(response, 200, {
         success: true,
         degraded: true,
-        message: 'TDX 額度暫時用盡，公車站牌將在額度恢復後自動載入',
+        message: '請求過多，請稍後再試',
         source: '交通部 TDX 公車站牌降級模式',
         observedAt: new Date().toISOString(),
         data: []
@@ -1095,7 +1295,7 @@ async function proxyBike(requestUrl, response) {
       sendJson(response, 200, {
         success: true,
         degraded: true,
-        message: 'TDX 額度暫時用盡，顯示本機快取的 YouBike 站點位置',
+        message: '請求過多，請稍後再試；目前顯示伺服器快取的 YouBike 站點位置',
         source: '交通部 TDX 公共自行車本機站點快取',
         observedAt: new Date().toISOString(),
         data
@@ -1284,7 +1484,7 @@ async function proxyTraffic(requestUrl, response) {
       sendJson(response, 200, {
         success: true,
         degraded: true,
-        message: 'TDX 額度暫時用盡，先顯示道路位置，暫無即時壅塞資料',
+        message: '請求過多，請稍後再試；目前暫無即時壅塞資料',
         source: '交通部 TDX 道路交通降級模式',
         observedAt: new Date().toISOString(),
         data: { roads: [] }
@@ -1411,8 +1611,14 @@ const server = http.createServer(async (request, response) => {
       credentials: {
         cwa: Boolean(process.env.CWA_API_KEY),
         tdxClientId: Boolean(process.env.TDX_CLIENT_ID),
-        tdxClientSecret: Boolean(process.env.TDX_CLIENT_SECRET)
-      }
+        tdxClientSecret: Boolean(process.env.TDX_CLIENT_SECRET),
+        tdxConfigured: tdxCredentials.length > 0,
+        tdxCredentialCount: tdxCredentials.length,
+        tdxAvailableCredentialCount: tdxCredentials
+          .filter((credential) => Date.now() >= credential.rateLimitedUntil).length
+      },
+      tdxRefreshIntervalSeconds: TDX_REFRESH_INTERVAL_MS / 1000,
+      tdxTrafficBikeRefreshIntervalSeconds: TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS / 1000
     });
     return;
   }
@@ -1493,6 +1699,7 @@ server.listen(PORT, HOST, () => {
   console.log(`Environment file: ${environmentFileLoaded ? 'loaded .env' : 'no .env file'}`);
   console.log(`CWA datasets: ${CWA_DATASET_IDS.join(', ')}`);
   console.log(`CWA weather: ${process.env.CWA_API_KEY ? 'configured' : 'missing CWA_API_KEY'}`);
-  console.log(`TDX transport: ${process.env.TDX_CLIENT_ID && process.env.TDX_CLIENT_SECRET ? 'configured' : 'missing TDX_CLIENT_ID/TDX_CLIENT_SECRET'}`);
+  console.log(`TDX transport: ${tdxCredentials.length ? `${tdxCredentials.length} credential pair(s) configured` : 'missing TDX credentials'}`);
+  startTdxCacheRefresh();
   startNationwideBusRefresh();
 });
