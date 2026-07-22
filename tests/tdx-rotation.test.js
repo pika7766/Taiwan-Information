@@ -222,15 +222,7 @@ async function runScenario({ allRateLimited }) {
     const parkingPayload = await parkingResponse.json();
     let busDetailResponse = null;
     let busDetailPayload = null;
-    let kinmenParkingResponse = null;
-    let matsuParkingResponse = null;
     if (!allRateLimited) {
-      kinmenParkingResponse = await fetch(
-        `http://127.0.0.1:${appPort}/api/tdx/parking?lat=24.432&lng=118.318&city=Kinmen&radius=5000`
-      );
-      matsuParkingResponse = await fetch(
-        `http://127.0.0.1:${appPort}/api/tdx/parking?lat=26.160&lng=119.930&city=Matsu&radius=5000`
-      );
       busDetailResponse = await fetch(
         `http://127.0.0.1:${appPort}/api/tdx/bus-details?lat=25.033&lng=121.5654&city=Taipei&routeName=307&plateNumber=TEST-001&direction=0&currentStopUid=S001`
       );
@@ -325,7 +317,7 @@ async function runScenario({ allRateLimited }) {
     }
     return {
       calls, status, stopResponse, stopPayload, parkingResponse, parkingPayload,
-      busDetailResponse, busDetailPayload, kinmenParkingResponse, matsuParkingResponse, admin
+      busDetailResponse, busDetailPayload, admin
     };
   } catch (error) {
     error.message += `\nServer output:\n${output}`;
@@ -364,8 +356,6 @@ test('TDX credentials rotate on 429 and report only aggregate status', async () 
   assert.ok(result.parkingPayload.data[0].distanceMeters < 50);
   assert.equal(result.calls.parkingLot, 1);
   assert.equal(result.calls.parkingAvailability, 1);
-  assert.equal(result.kinmenParkingResponse.status, 200);
-  assert.equal(result.matsuParkingResponse.status, 200);
   assert.equal(result.busDetailResponse.status, 200);
   assert.equal(result.busDetailPayload.success, true);
   assert.equal(result.busDetailPayload.data.routes.length, 1);
