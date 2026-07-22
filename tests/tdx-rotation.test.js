@@ -178,6 +178,7 @@ async function runScenario({ allRateLimited }) {
     TDX_CREDENTIALS_JSON: '[]',
     CWA_API_KEY: 'test-cwa-key',
     CWA_FETCH_ENABLED: 'true',
+    DATA_GOV_FETCH_ENABLED: 'true',
     TDX_REFRESH_INTERVAL_MS: '5000',
     BUS_REFRESH_INTERVAL_MS: '12000',
     TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS: '300000',
@@ -254,6 +255,24 @@ async function runScenario({ allRateLimited }) {
         body: JSON.stringify({ enabled: true })
       });
       const enableCwaPayload = await enableCwaResponse.json();
+      const disableDataGovResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/data-gov`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ enabled: false })
+      });
+      const disableDataGovPayload = await disableDataGovResponse.json();
+      const disabledReportsResponse = await fetch(
+        `http://127.0.0.1:${appPort}/api/data-gov/reports?cityTid=22003`
+      );
+      const disabledReportsPayload = await disabledReportsResponse.json();
+      const disabledDatasetSearchResponse = await fetch(`http://127.0.0.1:${appPort}/api/data-gov/datasets`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      const disabledDatasetSearchPayload = await disabledDatasetSearchResponse.json();
+      const enableDataGovResponse = await fetch(`http://127.0.0.1:${appPort}/api/admin/data-gov`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ enabled: true })
+      });
+      const enableDataGovPayload = await enableDataGovResponse.json();
       await fetch(`http://127.0.0.1:${appPort}/api/admin/logout`, {
         method: 'POST', headers: { Cookie: cookie }
       });
@@ -273,6 +292,12 @@ async function runScenario({ allRateLimited }) {
         disabledWeatherStatus: disabledWeatherResponse.status,
         disabledWeatherPayload,
         enableCwaPayload,
+        disableDataGovPayload,
+        disabledReportsStatus: disabledReportsResponse.status,
+        disabledReportsPayload,
+        disabledDatasetSearchStatus: disabledDatasetSearchResponse.status,
+        disabledDatasetSearchPayload,
+        enableDataGovPayload,
         loggedOutStatus: loggedOutStatusResponse.status
       };
     }
@@ -299,6 +324,7 @@ test('TDX credentials rotate on 429 and report only aggregate status', async () 
   assert.equal(result.status.credentials.tdxReservedBusDetailCredentialCount, 2);
   assert.equal(result.status.credentials.tdxReservedBusDetailAvailableCredentialCount, 2);
   assert.equal(result.status.cwaFetchingEnabled, true);
+  assert.equal(result.status.dataGovFetchingEnabled, true);
   assert.equal(result.status.busRefreshIntervalSeconds, 12);
   assert.equal(result.status.tdxRefreshIntervalSeconds, 5);
   assert.equal(result.status.tdxTrafficBikeRefreshIntervalSeconds, 300);
@@ -336,6 +362,12 @@ test('TDX credentials rotate on 429 and report only aggregate status', async () 
   assert.equal(result.admin.disabledWeatherStatus, 503);
   assert.equal(result.admin.disabledWeatherPayload.message, '管理員已關閉天氣資訊');
   assert.equal(result.admin.enableCwaPayload.cwaFetchingEnabled, true);
+  assert.equal(result.admin.disableDataGovPayload.dataGovFetchingEnabled, false);
+  assert.equal(result.admin.disabledReportsStatus, 503);
+  assert.equal(result.admin.disabledReportsPayload.message, '管理員已關閉當地資訊');
+  assert.equal(result.admin.disabledDatasetSearchStatus, 503);
+  assert.equal(result.admin.disabledDatasetSearchPayload.message, '管理員已關閉當地資訊');
+  assert.equal(result.admin.enableDataGovPayload.dataGovFetchingEnabled, true);
   assert.equal(result.admin.loggedOutStatus, 401);
 });
 

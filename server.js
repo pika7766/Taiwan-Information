@@ -169,6 +169,8 @@ let tdxFetchingEnabled = !/^(?:0|false|off)$/i.test(process.env.TDX_FETCH_ENABLE
 let tdxFetchingChangedAt = new Date().toISOString();
 let cwaFetchingEnabled = !/^(?:0|false|off)$/i.test(process.env.CWA_FETCH_ENABLED || 'true');
 let cwaFetchingChangedAt = new Date().toISOString();
+let dataGovFetchingEnabled = !/^(?:0|false|off)$/i.test(process.env.DATA_GOV_FETCH_ENABLED || 'true');
+let dataGovFetchingChangedAt = new Date().toISOString();
 const adminSessions = new Map();
 const adminLoginAttempts = new Map();
 
@@ -277,6 +279,8 @@ function adminStatusPayload() {
     tdxFetchingChangedAt,
     cwaFetchingEnabled,
     cwaFetchingChangedAt,
+    dataGovFetchingEnabled,
+    dataGovFetchingChangedAt,
     tdxCredentialCount: tdxCredentials.length,
     tdxAvailableCredentialCount: tdxCredentials
       .filter((credential) => Date.now() >= credential.rateLimitedUntil).length,
@@ -369,6 +373,24 @@ async function handleAdminCwaSetting(request, response) {
     }
     cwaFetchingEnabled = parsed.enabled;
     cwaFetchingChangedAt = new Date().toISOString();
+    sendJson(response, 200, adminStatusPayload());
+  } catch (error) {
+    sendApiError(response, error);
+  }
+}
+
+async function handleAdminDataGovSetting(request, response) {
+  if (!adminSessionFor(request)) {
+    sendAdminUnauthorized(response);
+    return;
+  }
+  try {
+    const { parsed } = await readJsonBody(request);
+    if (typeof parsed?.enabled !== 'boolean') {
+      throw new UpstreamError('enabled must be a boolean', 400);
+    }
+    dataGovFetchingEnabled = parsed.enabled;
+    dataGovFetchingChangedAt = new Date().toISOString();
     sendJson(response, 200, adminStatusPayload());
   } catch (error) {
     sendApiError(response, error);
@@ -1802,6 +1824,7 @@ async function proxyTraffic(requestUrl, response) {
 }
 
 async function fetchDataGovCategory(cityTid, category) {
+  if (!dataGovFetchingEnabled) throw new UpstreamError('管理員已關閉當地資訊', 503);
   const requestBody = {
     bool: [{ 'local_government_level_1.tid': { value: [cityTid] } }],
     filter: [{ fields: 'category_tid', query: category.tid }],
@@ -1835,6 +1858,7 @@ async function fetchDataGovCategory(cityTid, category) {
 
 async function proxyOfficialReports(requestUrl, response) {
   try {
+    if (!dataGovFetchingEnabled) throw new UpstreamError('管理員已關閉當地資訊', 503);
     const cityTid = Number(requestUrl.searchParams.get('cityTid'));
     if (!Number.isInteger(cityTid) || cityTid <= 0) throw new UpstreamError('cityTid must be a positive integer', 400);
     const results = await Promise.allSettled(
@@ -1856,6 +1880,7 @@ async function proxyOfficialReports(requestUrl, response) {
 
 async function proxyDatasetSearch(request, response) {
   try {
+    if (!dataGovFetchingEnabled) throw new UpstreamError('管理員已關閉當地資訊', 503);
     const { body } = await readJsonBody(request);
     const upstream = await fetch(DATA_GOV_ENDPOINT, {
       method: 'POST',
@@ -1930,6 +1955,8 @@ const server = http.createServer(async (request, response) => {
       tdxFetchingEnabled,
       cwaFetchingEnabled,
       cwaFetchingChangedAt,
+      dataGovFetchingEnabled,
+      dataGovFetchingChangedAt,
       busRefreshIntervalSeconds: BUS_REFRESH_INTERVAL_MS / 1000,
       tdxRefreshIntervalSeconds: TDX_REFRESH_INTERVAL_MS / 1000,
       tdxTrafficBikeRefreshIntervalSeconds: TDX_TRAFFIC_BIKE_REFRESH_INTERVAL_MS / 1000,
@@ -1955,6 +1982,10 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === 'POST' && requestUrl.pathname === '/api/admin/cwa') {
     await handleAdminCwaSetting(request, response);
+    return;
+  }
+  if (request.method === 'POST' && requestUrl.pathname === '/api/admin/data-gov') {
+    await handleAdminDataGovSetting(request, response);
     return;
   }
   if (request.method === 'POST' && requestUrl.pathname === '/api/admin/logout') {

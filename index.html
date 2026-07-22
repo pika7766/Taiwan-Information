@@ -294,6 +294,10 @@
               <span><strong class="block text-sm text-slate-900">中央氣象署資料取得</strong><span id="admin-cwa-state" class="mt-1 block text-xs text-slate-500"></span></span>
               <input id="admin-cwa-toggle" type="checkbox" role="switch" class="h-5 w-5 shrink-0 accent-brand-700">
             </label>
+            <label class="flex min-h-14 items-center justify-between gap-4 rounded-md border border-slate-200 px-4 py-3">
+              <span><strong class="block text-sm text-slate-900">政府資料開放平臺資料取得</strong><span id="admin-data-gov-state" class="mt-1 block text-xs text-slate-500"></span></span>
+              <input id="admin-data-gov-toggle" type="checkbox" role="switch" class="h-5 w-5 shrink-0 accent-brand-700">
+            </label>
             <dl class="divide-y divide-slate-200 border-y border-slate-200 text-sm">
               <div class="flex items-center justify-between py-3"><dt class="text-slate-500">可用憑證</dt><dd id="admin-credentials" class="font-bold text-slate-900">-</dd></div>
               <div class="flex items-center justify-between py-3"><dt class="text-slate-500">TDX 快取</dt><dd id="admin-cache-count" class="font-bold text-slate-900">-</dd></div>
@@ -517,6 +521,7 @@
     const PUBLIC_STATUS_REFRESH_INTERVAL_MS = 15_000;
     const TDX_DISABLED_MESSAGE = '管理員已關閉運輸資訊';
     const CWA_DISABLED_MESSAGE = '管理員已關閉天氣資訊';
+    const DATA_GOV_DISABLED_MESSAGE = '管理員已關閉當地資訊';
     const state = {
       config: null,
       selectedCityCode: null,
@@ -564,6 +569,7 @@
       publicStatusTimer: null,
       publicTdxFetchingEnabled: null,
       publicCwaFetchingEnabled: null,
+      publicDataGovFetchingEnabled: null,
       requestMessageTimer: null,
       lastDegradedNoticeAt: 0,
       notificationSnapshots: {},
@@ -608,6 +614,8 @@
       adminTdxState: document.getElementById('admin-tdx-state'),
       adminCwaToggle: document.getElementById('admin-cwa-toggle'),
       adminCwaState: document.getElementById('admin-cwa-state'),
+      adminDataGovToggle: document.getElementById('admin-data-gov-toggle'),
+      adminDataGovState: document.getElementById('admin-data-gov-state'),
       adminCredentials: document.getElementById('admin-credentials'),
       adminCacheCount: document.getElementById('admin-cache-count'),
       adminScope: document.getElementById('admin-scope'),
@@ -2037,6 +2045,7 @@
       const previousTdxState = state.publicTdxFetchingEnabled;
       state.publicTdxFetchingEnabled = payload.tdxFetchingEnabled !== false;
       state.publicCwaFetchingEnabled = payload.cwaFetchingEnabled !== false;
+      state.publicDataGovFetchingEnabled = payload.dataGovFetchingEnabled !== false;
       if (notify && !state.publicTdxFetchingEnabled && previousTdxState !== false) {
         showRequestMessage(TDX_DISABLED_MESSAGE);
       }
@@ -2182,9 +2191,13 @@
       title.className = 'mt-2 text-xl font-bold leading-7 text-slate-950';
       title.textContent = `${region.cityName}${region.district}生活資訊報導`;
       const description = createReportParagraph(
-        state.publicCwaFetchingEnabled === false
-          ? '天氣資訊目前由管理員關閉；其餘內容仍直接整理政府資料開放平臺的回應。交通資訊可由地圖左上角分別開關。'
-          : '以下內容直接整理中央氣象署與政府資料開放平臺的回應。五個資料夾預設全部展開；交通資訊已改為地圖圖層，可由地圖左上角分別開關。',
+        state.publicCwaFetchingEnabled === false && state.publicDataGovFetchingEnabled === false
+          ? '天氣資訊與當地資訊目前由管理員關閉；交通資訊仍可由地圖左上角分別開關。'
+          : state.publicCwaFetchingEnabled === false
+            ? '天氣資訊目前由管理員關閉；其餘內容仍直接整理政府資料開放平臺的回應。交通資訊可由地圖左上角分別開關。'
+            : state.publicDataGovFetchingEnabled === false
+              ? '當地資訊目前由管理員關閉；其餘內容仍直接整理中央氣象署的回應。交通資訊可由地圖左上角分別開關。'
+              : '以下內容直接整理中央氣象署與政府資料開放平臺的回應。五個資料夾預設全部展開；交通資訊已改為地圖圖層，可由地圖左上角分別開關。',
         'mt-2 text-sm leading-6 text-slate-600'
       );
       const meta = createReportParagraph(
@@ -2195,7 +2208,14 @@
 
       const loading = document.createElement('div');
       loading.className = 'mt-4 flex items-center gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600';
-      loading.innerHTML = `<span class="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>${state.publicCwaFetchingEnabled === false ? '正在向政府資料開放平臺讀取官方資料...' : '正在向中央氣象署與政府資料開放平臺讀取官方資料...'}`;
+      const loadingMessage = state.publicCwaFetchingEnabled === false && state.publicDataGovFetchingEnabled === false
+        ? '正在整理其餘官方資料...'
+        : state.publicCwaFetchingEnabled === false
+          ? '正在向政府資料開放平臺讀取官方資料...'
+          : state.publicDataGovFetchingEnabled === false
+            ? '正在向中央氣象署讀取官方資料...'
+            : '正在向中央氣象署與政府資料開放平臺讀取官方資料...';
+      loading.innerHTML = `<span class="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-700"></span>${loadingMessage}`;
       elements.infoContent.replaceChildren(introduction, loading);
 
       const [weatherResult, safetyResult, reportsResult] = await Promise.allSettled([
@@ -2265,7 +2285,16 @@
         });
       }
 
-      const reportFolders = reportsResult.status === 'fulfilled'
+      const dataGovDisabledByAdmin = reportsResult.status === 'rejected'
+        && reportsResult.reason?.message === DATA_GOV_DISABLED_MESSAGE;
+      const reportFolders = dataGovDisabledByAdmin
+        ? [{
+          name: '當地資訊',
+          source: '系統管理設定',
+          observedAt: null,
+          articles: [{ title: DATA_GOV_DISABLED_MESSAGE, paragraphs: ['目前不會向政府資料開放平臺讀取新的當地資料。'] }]
+        }]
+        : reportsResult.status === 'fulfilled'
         ? reportsResult.value.data.map((report) => {
           const datasets = report.datasets || [];
           const paragraphs = datasets.map((dataset) => {
@@ -2319,6 +2348,7 @@
       elements.adminPanel.classList.add('hidden');
       elements.adminTdxToggle.disabled = false;
       elements.adminCwaToggle.disabled = false;
+      elements.adminDataGovToggle.disabled = false;
     }
 
     function renderAdminStatus(payload) {
@@ -2331,6 +2361,9 @@
       elements.adminCwaToggle.checked = payload.cwaFetchingEnabled === true;
       elements.adminCwaToggle.disabled = false;
       elements.adminCwaState.textContent = payload.cwaFetchingEnabled ? '目前允許伺服器連線' : '目前已停止新連線';
+      elements.adminDataGovToggle.checked = payload.dataGovFetchingEnabled === true;
+      elements.adminDataGovToggle.disabled = false;
+      elements.adminDataGovState.textContent = payload.dataGovFetchingEnabled ? '目前允許伺服器連線' : '目前已停止新連線';
       elements.adminCredentials.textContent = `一般 ${payload.tdxGeneralAvailableCredentialCount} / ${payload.tdxGeneralCredentialCount}；公車詳細 ${payload.tdxReservedBusDetailAvailableCredentialCount} / ${payload.tdxReservedBusDetailCredentialCount}`;
       elements.adminCacheCount.textContent = String(payload.cachedTdxQueries ?? 0);
       elements.adminScope.textContent = payload.acquisitionScope?.nationwideSingleRequestAvailable
@@ -2456,6 +2489,33 @@
         showAdminMessage(error.message);
       } finally {
         elements.adminCwaToggle.disabled = false;
+      }
+    }
+
+    async function updateAdminDataGovSetting() {
+      const enabled = elements.adminDataGovToggle.checked;
+      elements.adminDataGovToggle.disabled = true;
+      try {
+        const response = await fetch(new URL('/api/admin/data-gov', API_BASE_URL), {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          showAdminLogin();
+          throw new Error(payload.message || '請重新登入');
+        }
+        if (!response.ok || !payload.success) throw new Error(payload.message || `HTTP ${response.status}`);
+        renderAdminStatus(payload);
+        state.publicDataGovFetchingEnabled = enabled;
+        showAdminMessage(enabled ? '政府資料開放平臺資料取得已啟用' : '政府資料開放平臺資料取得已停用', 'success');
+      } catch (error) {
+        elements.adminDataGovToggle.checked = !enabled;
+        showAdminMessage(error.message);
+      } finally {
+        elements.adminDataGovToggle.disabled = false;
       }
     }
 
@@ -2639,6 +2699,11 @@
         return;
       }
 
+      if (state.publicDataGovFetchingEnabled === false) {
+        showCategoryMessage(DATA_GOV_DISABLED_MESSAGE);
+        return;
+      }
+
       await fetchCategoryDatasets(category, city);
     }
 
@@ -2702,7 +2767,11 @@
         });
 
         if (!response.ok) {
-          throw new Error(`代理 API 回傳 HTTP ${responseStatus} ${responseStatusText}`.trim());
+          let responseMessage = '';
+          try {
+            responseMessage = JSON.parse(responseText).message || '';
+          } catch (error) {}
+          throw new Error(responseMessage || `代理 API 回傳 HTTP ${responseStatus} ${responseStatusText}`.trim());
         }
 
         let result;
@@ -2729,7 +2798,9 @@
           error
         });
         showCategoryMessage(
-          responseStatus === 404
+          error.message === DATA_GOV_DISABLED_MESSAGE
+            ? DATA_GOV_DISABLED_MESSAGE
+            : responseStatus === 404
             ? '找不到資料代理路由，請確認目前頁面是由 node server.js 提供。'
             : '目前無法讀取政府開放資料，請稍後再試或開啟完整清單。'
         );
@@ -2842,6 +2913,7 @@
       bindEventListener(elements.adminLoginForm, 'submit', submitAdminLogin, '#admin-login-form');
       bindEventListener(elements.adminTdxToggle, 'change', updateAdminTdxSetting, '#admin-tdx-toggle');
       bindEventListener(elements.adminCwaToggle, 'change', updateAdminCwaSetting, '#admin-cwa-toggle');
+      bindEventListener(elements.adminDataGovToggle, 'change', updateAdminDataGovSetting, '#admin-data-gov-toggle');
       bindEventListener(elements.adminRefreshButton, 'click', () => {
         loadAdminStatus().catch((error) => showAdminMessage(error.message));
       }, '#admin-refresh-button');

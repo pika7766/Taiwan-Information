@@ -29,7 +29,7 @@
 
 - 服務選單提供管理員登入，預設帳號為 `admin`、密碼為 `7766`。
 - 登入狀態使用伺服器端 session 與 HttpOnly Cookie，不會將密碼或 session 寫入瀏覽器儲存空間。
-- 管理員可分別啟用或停用 TDX 運輸資訊與中央氣象署資料取得；TDX 停用期間仍保留既有伺服器快取。
+- 管理員可分別啟用或停用 TDX 運輸資訊、中央氣象署及政府資料開放平臺資料取得；TDX 停用期間仍保留既有伺服器快取。
 
 ### 生活與公共資訊
 
@@ -100,6 +100,7 @@ TDX 官方 Swagger 顯示，市區公車、YouBike、縣市路況與縣市停車
 | --- | --- | --- |
 | `CWA_API_KEY` | 是 | 中央氣象署 API 憑證 |
 | `CWA_FETCH_ENABLED` | 否 | 服務啟動時是否允許取得中央氣象署資料，預設 `true` |
+| `DATA_GOV_FETCH_ENABLED` | 否 | 服務啟動時是否允許取得政府資料開放平臺資料，預設 `true` |
 | `ADMIN_USERNAME` | 否 | 管理員帳號，預設 `admin` |
 | `ADMIN_PASSWORD` | 否 | 管理員密碼，預設 `7766`；正式環境建議覆寫 |
 | `TDX_FETCH_ENABLED` | 否 | 服務啟動時是否允許取得 TDX，預設 `true` |
@@ -147,9 +148,10 @@ TDX_CLIENT_SECRET_8
 
 - `GET /api/status`：檢查服務及環境變數設定狀態，不回傳憑證內容。
 - `POST /api/admin/login`：建立管理員 session。
-- `GET /api/admin/status`：取得 TDX、中央氣象署開關、可用憑證與快取狀態，需管理員 session。
+- `GET /api/admin/status`：取得 TDX、中央氣象署、政府資料開放平臺開關、可用憑證與快取狀態，需管理員 session。
 - `POST /api/admin/tdx`：以 `{ "enabled": true|false }` 控制 TDX 資料取得，需管理員 session。
 - `POST /api/admin/cwa`：以 `{ "enabled": true|false }` 控制中央氣象署資料取得，需管理員 session。
+- `POST /api/admin/data-gov`：以 `{ "enabled": true|false }` 控制政府資料開放平臺資料取得，需管理員 session。
 - `POST /api/admin/logout`：登出並清除管理員 session。
 - `GET /api/tdx/bus?scope=all`：取得目前已儲存的全臺公車快照。
 - `GET /api/tdx/parking?lat=25.033&lng=121.5654&city=Taipei&radius=5000`：取得附近停車場與剩餘車位。
