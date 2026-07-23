@@ -118,7 +118,7 @@ TDX 官方 Swagger 顯示，市區公車、YouBike、縣市路況與縣市停車
 
 Render 會自動提供 `PORT`，伺服器已監聽 `0.0.0.0`，不需要手動指定連接埠。若使用 Render Persistent Disk，建議掛載至 `/var/data`，並設定 `BUS_REALTIME_CACHE_FILE=/var/data/bus_realtime_cache.json`。
 
-八組 TDX 帳號請在 Render 的 Environment 頁面分別新增以下 Key；Value 填入各組實際帳號與密鑰：
+需在 Render 的 Environment 頁面分別新增以下 Key；Value 填入各組實際帳號與密鑰：
 
 ```text
 TDX_CLIENT_ID
