@@ -86,7 +86,12 @@ function tdxPayloadFor(requestUrl, credentialName) {
   return [];
 }
 
-async function runScenario({ primaryIds = ['primary-1', 'primary-2'], limited = [], unavailable = [] } = {}) {
+async function runScenario({
+  primaryIds = ['primary-1', 'primary-2'],
+  limited = [],
+  unavailable = [],
+  sharedCredential = null
+} = {}) {
   const limitedSet = new Set(limited);
   const unavailableSet = new Set(unavailable);
   const calls = [];
@@ -131,6 +136,10 @@ async function runScenario({ primaryIds = ['primary-1', 'primary-2'], limited = 
     credentials[`TDX_CLIENT_ID_${index + 1}`] = id;
     credentials[`TDX_CLIENT_SECRET_${index + 1}`] = `${id}-secret`;
   });
+  if (sharedCredential) {
+    credentials.TDX_SHARED_CLIENT_ID = sharedCredential;
+    credentials.TDX_SHARED_CLIENT_SECRET = `${sharedCredential}-secret`;
+  }
   credentials.TDX_CLIENT_ID_8 = 'reserve';
   credentials.TDX_CLIENT_SECRET_8 = 'reserve-secret';
   const env = {
@@ -233,4 +242,17 @@ test('rate-limit messaging appears only when primary and reserve pools are both 
   assert.equal(result.detail.message, '請求過多，請稍後再試');
   assert.equal(result.finalStatus.credentials.tdxPrimaryAvailableCredentialCount, 0);
   assert.equal(result.finalStatus.credentials.tdxReserveAvailableCredentialCount, 0);
+});
+
+test('legacy shared TDX credentials are still accepted as primary pool credentials', async () => {
+  const result = await runScenario({
+    primaryIds: [],
+    sharedCredential: 'legacy-shared'
+  });
+  assert.equal(result.initialStatus.credentials.tdxPrimaryCredentialCount, 1);
+  assert.equal(result.initialStatus.credentials.tdxReserveCredentialCount, 1);
+  assert.equal(result.parkingResponse.status, 200);
+  assert.equal(result.parking.data[0].parkingId, 'P-legacy-shared');
+  assert.ok(result.calls.some((call) => call.credentialName === 'legacy-shared'));
+  assert.equal(result.calls.filter((call) => call.credentialName === 'reserve').length, 0);
 });

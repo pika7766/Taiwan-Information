@@ -171,7 +171,7 @@ GRAPHHOPPER_API_KEY_1
 GRAPHHOPPER_API_KEY_2
 ```
 
-每一組 TDX ID 與 Secret 必須使用相同編號成對設定。`_1` 至 `_7` 全部屬於優先池，固定資料、即時資料及公車詳細資料都會從這個池依序取用；只有優先池目前沒有任何可用帳密時，才切換到只含 `_8` 的預備池。舊的 `TDX_SHARED_CLIENT_ID`、`TDX_SHARED_CLIENT_SECRET` 與 `TDX_CREDENTIALS_JSON` 已不再使用，可從 Render 移除。
+每一組 TDX ID 與 Secret 必須使用相同編號成對設定。`_1` 至 `_7` 全部屬於優先池，固定資料、即時資料及公車詳細資料都會從這個池依序取用；只有優先池目前沒有任何可用帳密時，才切換到只含 `_8` 的預備池。舊的 `TDX_SHARED_CLIENT_ID`、`TDX_SHARED_CLIENT_SECRET` 與 `TDX_CREDENTIALS_JSON` 仍可向下相容讀取（預設視為優先池），但建議逐步改成 `_1`～`_8` 命名。
 
 GraphHopper 的兩組 key 分別填入 `GRAPHHOPPER_API_KEY_1` 與 `GRAPHHOPPER_API_KEY_2`。金鑰只由 Node.js 後端送往 GraphHopper，不會出現在瀏覽器回應或前端程式碼。不要把實際 TDX 帳密或 GraphHopper key 寫入 GitHub、`README.md` 或 `credentials-template.txt`。
 
