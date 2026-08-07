@@ -1,0 +1,7 @@
+node_modules/
+.gradle/
+android/.gradle/
+android/local.properties
+android/app/build/
+android/app/google-services.json
+安裝檔/*.aab

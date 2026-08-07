@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">台灣智慧生活</string>
+    <string name="title_activity_main">台灣智慧生活</string>
+    <string name="package_name">com.pika7766.taiwansmartlife</string>
+    <string name="custom_url_scheme">com.pika7766.taiwansmartlife</string>
+</resources>
