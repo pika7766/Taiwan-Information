@@ -818,6 +818,25 @@ function loadTdxCredentials() {
   }));
 }
 
+function hasTdxNumberedEnvironment(prefix) {
+  for (let index = 1; index <= 8; index += 1) {
+    if (String(process.env[`${prefix}_${index}`] || '').trim()) return true;
+  }
+  return false;
+}
+
+function tdxCredentialSourceFlags() {
+  return {
+    numbered: hasTdxNumberedEnvironment('TDX_CLIENT_ID')
+      || hasTdxNumberedEnvironment('TDX_CLIENT_SECRET')
+      || Boolean(String(process.env.TDX_CLIENT_ID || '').trim())
+      || Boolean(String(process.env.TDX_CLIENT_SECRET || '').trim()),
+    legacyShared: Boolean(String(process.env.TDX_SHARED_CLIENT_ID || '').trim())
+      || Boolean(String(process.env.TDX_SHARED_CLIENT_SECRET || '').trim()),
+    legacyJson: Boolean(String(process.env.TDX_CREDENTIALS_JSON || '').trim())
+  };
+}
+
 function base64UrlJson(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
@@ -6167,10 +6186,17 @@ const server = http.createServer(async (request, response) => {
       cwaDatasetCandidates: CWA_DATASET_IDS,
       credentials: {
         cwa: Boolean(process.env.CWA_API_KEY),
-        tdxClientId: Boolean(process.env.TDX_CLIENT_ID_1 || process.env.TDX_CLIENT_ID),
-        tdxClientSecret: Boolean(process.env.TDX_CLIENT_SECRET_1 || process.env.TDX_CLIENT_SECRET),
+        tdxCredentialSources: tdxCredentialSourceFlags(),
+        tdxClientId: hasTdxNumberedEnvironment('TDX_CLIENT_ID')
+          || Boolean(String(process.env.TDX_CLIENT_ID || '').trim())
+          || Boolean(String(process.env.TDX_SHARED_CLIENT_ID || '').trim()),
+        tdxClientSecret: hasTdxNumberedEnvironment('TDX_CLIENT_SECRET')
+          || Boolean(String(process.env.TDX_CLIENT_SECRET || '').trim())
+          || Boolean(String(process.env.TDX_SHARED_CLIENT_SECRET || '').trim()),
         tdxConfigured: tdxCredentials.length > 0,
         tdxCredentialCount: tdxCredentials.length,
+        tdxPrimaryCredentialLabels: tdxCredentialPools.primary.map((credential) => credential.label),
+        tdxReserveCredentialLabels: tdxCredentialPools.reserve.map((credential) => credential.label),
         tdxAvailableCredentialCount: tdxCredentials
           .filter((credential) => Date.now() >= credential.rateLimitedUntil).length,
         tdxPrimaryCredentialCount: tdxCredentialPools.primary.length,
