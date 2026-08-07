@@ -764,29 +764,6 @@ function loadTdxCredentials() {
     definitions.push({ clientId: normalizedId, clientSecret: normalizedSecret, label, pool });
   };
 
-  const addLegacyCredentialsFromJson = () => {
-    const rawJson = String(process.env.TDX_CREDENTIALS_JSON || '').trim();
-    if (!rawJson) return;
-    try {
-      const parsed = JSON.parse(rawJson);
-      const entries = Array.isArray(parsed) ? parsed : [parsed];
-      entries.forEach((item, index) => {
-        if (!item || typeof item !== 'object') return;
-        const clientId = item.clientId || item.client_id || item.id || '';
-        const clientSecret = item.clientSecret || item.client_secret || item.secret || '';
-        const explicitIndex = Number(item.index ?? item.slot ?? item.order);
-        const poolLabel = String(item.pool || item.tier || '').trim().toLowerCase();
-        const pool = explicitIndex === 8 || poolLabel === 'reserve' ? 'reserve' : 'primary';
-        const label = Number.isFinite(explicitIndex) && explicitIndex > 0
-          ? `credential-${explicitIndex}`
-          : `credential-legacy-${index + 1}`;
-        addCredential(clientId, clientSecret, label, pool);
-      });
-    } catch (error) {
-      console.error('Unable to parse TDX_CREDENTIALS_JSON:', error.message);
-    }
-  };
-
   for (let index = 1; index <= 8; index += 1) {
     const clientId = process.env[`TDX_CLIENT_ID_${index}`]
       || (index === 1 ? process.env.TDX_CLIENT_ID : '');
@@ -800,14 +777,6 @@ function loadTdxCredentials() {
     );
   }
 
-  addCredential(
-    process.env.TDX_SHARED_CLIENT_ID,
-    process.env.TDX_SHARED_CLIENT_SECRET,
-    'credential-shared',
-    'primary'
-  );
-  addLegacyCredentialsFromJson();
-
   return definitions.map((definition, index) => ({
     ...definition,
     index,
@@ -816,25 +785,6 @@ function loadTdxCredentials() {
     tokenPromise: null,
     rateLimitedUntil: 0
   }));
-}
-
-function hasTdxNumberedEnvironment(prefix) {
-  for (let index = 1; index <= 8; index += 1) {
-    if (String(process.env[`${prefix}_${index}`] || '').trim()) return true;
-  }
-  return false;
-}
-
-function tdxCredentialSourceFlags() {
-  return {
-    numbered: hasTdxNumberedEnvironment('TDX_CLIENT_ID')
-      || hasTdxNumberedEnvironment('TDX_CLIENT_SECRET')
-      || Boolean(String(process.env.TDX_CLIENT_ID || '').trim())
-      || Boolean(String(process.env.TDX_CLIENT_SECRET || '').trim()),
-    legacyShared: Boolean(String(process.env.TDX_SHARED_CLIENT_ID || '').trim())
-      || Boolean(String(process.env.TDX_SHARED_CLIENT_SECRET || '').trim()),
-    legacyJson: Boolean(String(process.env.TDX_CREDENTIALS_JSON || '').trim())
-  };
 }
 
 function base64UrlJson(value) {
@@ -6186,17 +6136,10 @@ const server = http.createServer(async (request, response) => {
       cwaDatasetCandidates: CWA_DATASET_IDS,
       credentials: {
         cwa: Boolean(process.env.CWA_API_KEY),
-        tdxCredentialSources: tdxCredentialSourceFlags(),
-        tdxClientId: hasTdxNumberedEnvironment('TDX_CLIENT_ID')
-          || Boolean(String(process.env.TDX_CLIENT_ID || '').trim())
-          || Boolean(String(process.env.TDX_SHARED_CLIENT_ID || '').trim()),
-        tdxClientSecret: hasTdxNumberedEnvironment('TDX_CLIENT_SECRET')
-          || Boolean(String(process.env.TDX_CLIENT_SECRET || '').trim())
-          || Boolean(String(process.env.TDX_SHARED_CLIENT_SECRET || '').trim()),
+        tdxClientId: Boolean(process.env.TDX_CLIENT_ID_1 || process.env.TDX_CLIENT_ID),
+        tdxClientSecret: Boolean(process.env.TDX_CLIENT_SECRET_1 || process.env.TDX_CLIENT_SECRET),
         tdxConfigured: tdxCredentials.length > 0,
         tdxCredentialCount: tdxCredentials.length,
-        tdxPrimaryCredentialLabels: tdxCredentialPools.primary.map((credential) => credential.label),
-        tdxReserveCredentialLabels: tdxCredentialPools.reserve.map((credential) => credential.label),
         tdxAvailableCredentialCount: tdxCredentials
           .filter((credential) => Date.now() >= credential.rateLimitedUntil).length,
         tdxPrimaryCredentialCount: tdxCredentialPools.primary.length,
