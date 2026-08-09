@@ -231,6 +231,9 @@ const tdxCredentialPools = {
 const activeTdxCredentialIndexes = { primary: 0, reserve: 0 };
 let lastCredentialSwitchAt = 0;
 let backgroundPoolPausedUntil = 0; // when set, background tasks should pause using primary pool
+function isBackgroundPoolPaused() {
+  return Date.now() < backgroundPoolPausedUntil;
+}
 const graphHopperApiKeys = loadGraphHopperApiKeys();
 let activeGraphHopperApiKeyIndex = 0;
 let bikeStationDiskCache = [];
@@ -1475,6 +1478,16 @@ async function refreshActiveTdxCache() {
 
 function startTdxCacheRefresh() {
   tdxCacheRefreshTimer = setInterval(() => {
+    if (isBackgroundPoolPaused()) {
+      console.warn('Skipping TDX shared cache refresh; background pool is paused');
+      return;
+    }
+    // If we just resumed from a pause, stagger the refresh to avoid thundering herd
+    if (backgroundPoolPausedUntil && Date.now() - backgroundPoolPausedUntil < 30_000) {
+      const jitter = Math.floor(Math.random() * 30_000);
+      setTimeout(() => refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message)), jitter);
+      return;
+    }
     refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message));
   }, TDX_REFRESH_INTERVAL_MS);
   tdxCacheRefreshTimer.unref?.();
@@ -2326,6 +2339,10 @@ async function fetchNationwideBusSource(source) {
 
 async function refreshNationwideBusSnapshot() {
   if (!tdxFetchingEnabled) return nationwideBusSnapshot;
+  if (isBackgroundPoolPaused()) {
+    console.warn('refreshNationwideBusSnapshot: skipped because background pool is paused');
+    return nationwideBusSnapshot;
+  }
   if (nationwideBusRefreshPromise) return nationwideBusRefreshPromise;
   nationwideBusRefreshPromise = (async () => {
     const attemptedAt = new Date().toISOString();
@@ -2371,8 +2388,22 @@ async function refreshNationwideBusSnapshot() {
 }
 
 function startNationwideBusRefresh() {
-  refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
+  // Initial run respects background pause and staggers immediate resume
+  if (!isBackgroundPoolPaused()) {
+    refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
+  } else {
+    console.warn('Initial nationwide bus refresh skipped; background pool paused');
+  }
   nationwideBusRefreshTimer = setInterval(() => {
+    if (isBackgroundPoolPaused()) {
+      console.warn('Skipping nationwide bus refresh; background pool paused');
+      return;
+    }
+    if (backgroundPoolPausedUntil && Date.now() - backgroundPoolPausedUntil < 30_000) {
+      const jitter = Math.floor(Math.random() * 30_000);
+      setTimeout(() => refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message)), jitter);
+      return;
+    }
     refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
   }, BUS_REFRESH_INTERVAL_MS);
   nationwideBusRefreshTimer.unref?.();
@@ -2425,28 +2456,51 @@ async function proxyBus(requestUrl, response) {
 }
 async function proxyBusStops(requestUrl, response) {
   try {
-    const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
-    const stopsPayload = await fetchTdxCity('v2/Bus/Stop/City', city, {
-      '$top': 10000
-    }, TDX_STATIC_REFRESH_INTERVAL_MS);
-    const stopMap = new Map();
-    asArray(stopsPayload).map((stop) => mapBusStop(stop, { lat, lng }))
-      .filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lng) && stop.distanceMeters <= 2_000)
-      .forEach((stop) => {
-        const key = `${stop.stopName}|${stop.lat.toFixed(4)}|${stop.lng.toFixed(4)}`;
-        const existing = stopMap.get(key);
-        if (existing) existing.stopUids.push(...stop.stopUids.filter((uid) => !existing.stopUids.includes(uid)));
-        else stopMap.set(key, stop);
+    await runWithTdxPriority('high', async () => {
+      const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
+      const city = requireTdxCity(requestUrl.searchParams, lat, lng);
+      const stopsPayload = await fetchTdxCity('v2/Bus/Stop/City', city, {
+        '$top': 10000
+      }, TDX_STATIC_REFRESH_INTERVAL_MS);
+      const stopMap = new Map();
+      asArray(stopsPayload).map((stop) => mapBusStop(stop, { lat, lng }))
+        .filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lng) && stop.distanceMeters <= 2_000)
+        .forEach((stop) => {
+          const key = `${stop.stopName}|${stop.lat.toFixed(4)}|${stop.lng.toFixed(4)}`;
+          const existing = stopMap.get(key);
+          if (existing) existing.stopUids.push(...stop.stopUids.filter((uid) => !existing.stopUids.includes(uid)));
+          else stopMap.set(key, stop);
+        });
+      sendJson(response, 200, {
+        success: true,
+        source: '交通部 TDX 公車站牌長效快取',
+        observedAt: new Date().toISOString(),
+        data: [...stopMap.values()]
       });
-    sendJson(response, 200, {
-      success: true,
-      source: '交通部 TDX 公車站牌長效快取',
-      observedAt: new Date().toISOString(),
-      data: [...stopMap.values()]
     });
   } catch (error) {
-    if (error.status === 429) {
+    // On rate limit or upstream failure, attempt to return stale cache instead of 503
+    if ((error.status === 429 || (error.status && error.status >= 500))) {
+      try {
+        const { lat, lng } = (() => {
+          try { return requireTaiwanCoordinates(requestUrl.searchParams); } catch (_) { return { lat: null, lng: null }; }
+        })();
+        const city = (() => { try { return requireTdxCity(requestUrl.searchParams, lat, lng); } catch (_) { return null; } })();
+        const url = city ? tdxCityUrl('v2/Bus/Stop/City', city, { '$top': 10000 }) : null;
+        const cache = url ? tdxResponseCache.get(`primary:${url.toString()}`) : null;
+        const cachedData = cache?.data || [];
+        const mapped = Array.isArray(cachedData) ? cachedData.map((stop) => mapBusStop(stop, { lat, lng })).filter((stop) => Number.isFinite(stop.lat) && Number.isFinite(stop.lng) && stop.distanceMeters <= 2_000) : [];
+        sendJson(response, 200, {
+          success: true,
+          degraded: true,
+          source: '交通部 TDX 公車站牌降級快取',
+          observedAt: new Date().toISOString(),
+          data: mapped
+        });
+        return;
+      } catch (e) {
+        // fallthrough
+      }
       sendJson(response, 200, {
         success: true,
         degraded: true,
@@ -2502,27 +2556,51 @@ async function fetchBikeCityData(city, origin = null, includeAvailability = true
 
 async function proxyBike(requestUrl, response) {
   try {
-    const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
-    const data = (await fetchBikeCityData(city, { lat, lng }))
-      .sort((left, right) => left.distanceMeters - right.distanceMeters);
-    sendJson(response, 200, {
-      success: true,
-      source: '交通部 TDX 公共自行車即時動態',
-      observedAt: new Date().toISOString(),
-      data
-    });
-  } catch (error) {
-    if (error.status === 429 && bikeStationDiskCache.length) {
+    await runWithTdxPriority('high', async () => {
       const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
       const city = requireTdxCity(requestUrl.searchParams, lat, lng);
-      const data = bikeStationDiskCache.map((station) => ({
-        ...station,
-        distanceMeters: Math.round(haversineMeters(lat, lng, station.lat, station.lng)),
-        availableRentBikes: null,
-        availableReturnBikes: null,
-        serviceStatus: null,
-        updateTime: null
+      const data = (await fetchBikeCityData(city, { lat, lng }))
+        .sort((left, right) => left.distanceMeters - right.distanceMeters);
+      sendJson(response, 200, {
+        success: true,
+        source: '交通部 TDX 公共自行車即時動態',
+        observedAt: new Date().toISOString(),
+        data
+      });
+    });
+  } catch (error) {
+    if ((error.status === 429 || (error.status && error.status >= 500)) && bikeStationDiskCache.length) {
+      try {
+        const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
+        const city = requireTdxCity(requestUrl.searchParams, lat, lng);
+        const data = bikeStationDiskCache.map((station) => ({
+          ...station,
+          distanceMeters: Math.round(haversineMeters(lat, lng, station.lat, station.lng)),
+          availableRentBikes: null,
+          availableReturnBikes: null,
+          serviceStatus: null,
+          updateTime: null
+        }))
+          .filter((station) => station.distanceMeters <= 30_000)
+          .sort((left, right) => left.distanceMeters - right.distanceMeters);
+        sendJson(response, 200, {
+          success: true,
+          degraded: true,
+          message: '請求過多，請稍後再試；目前顯示伺服器快取的 YouBike 站點位置',
+          source: '交通部 TDX 公共自行車本機站點快取',
+          observedAt: new Date().toISOString(),
+          data
+        });
+        return;
+      } catch (e) {
+        // Fallthrough to sendApiError
+      }
+    }
+    sendApiError(response, error);
+  }
+}
+    sendApiError(response, error);
+  }
       }))
         .filter((station) => station.distanceMeters <= 30_000)
         .sort((left, right) => left.distanceMeters - right.distanceMeters);
@@ -2548,8 +2626,10 @@ async function proxyBikeAll(requestUrl, response) {
       let unavailableCities = [];
       if (currentCity) {
         try {
-          const currentCityData = await fetchBikeCityData(currentCity);
-          data = [...bikeStationDiskCache.filter((station) => station.city !== currentCity), ...currentCityData];
+          await runWithTdxPriority('high', async () => {
+            const currentCityData = await fetchBikeCityData(currentCity);
+            data = [...bikeStationDiskCache.filter((station) => station.city !== currentCity), ...currentCityData];
+          });
         } catch (error) {
           unavailableCities = [currentCity];
           console.error(`TDX ${currentCity} YouBike live data unavailable; disk cache is retained:`, error.message);
@@ -2566,8 +2646,8 @@ async function proxyBikeAll(requestUrl, response) {
       return;
     }
     const cities = [...new Set(Object.values(TDX_CITY_BY_PORTAL_CODE))];
-    const results = await Promise.allSettled(cities.map((city) =>
-      fetchBikeCityData(city, null, city === currentCity)));
+    const results = await runWithTdxPriority('high', async () => Promise.allSettled(cities.map((city) =>
+      fetchBikeCityData(city, null, city === currentCity))));
     const data = results.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
     const unavailableCities = results.flatMap((result, index) => result.status === 'rejected' ? [cities[index]] : []);
     const retryableCities = results.flatMap((result, index) => result.status === 'rejected'
