@@ -86,7 +86,7 @@ function tdxPayloadFor(requestUrl, credentialName) {
   return [];
 }
 
-async function runScenario({ primaryIds = ['primary-1', 'primary-2'], limited = [], unavailable = [] } = {}) {
+async function runScenario({ credentialId = 'single', limited = [], unavailable = [] } = {}) {
   const limitedSet = new Set(limited);
   const unavailableSet = new Set(unavailable);
   const calls = [];
@@ -126,17 +126,11 @@ async function runScenario({ primaryIds = ['primary-1', 'primary-2'], limited = 
     .filter(([name]) => !/^TDX_CLIENT_(?:ID|SECRET)(?:_\d+)?$/.test(name)
       && !/^TDX_SHARED_CLIENT_(?:ID|SECRET)$/.test(name)
       && name !== 'TDX_CREDENTIALS_JSON'));
-  const credentials = {};
-  primaryIds.forEach((id, index) => {
-    credentials[`TDX_CLIENT_ID_${index + 1}`] = id;
-    credentials[`TDX_CLIENT_SECRET_${index + 1}`] = `${id}-secret`;
-  });
-  credentials.TDX_CLIENT_ID_8 = 'reserve';
-  credentials.TDX_CLIENT_SECRET_8 = 'reserve-secret';
   const env = {
     ...cleanEnvironment,
-    ...credentials,
     SKIP_ENV_FILE: 'true',
+    TDX_CLIENT_ID: credentialId,
+    TDX_CLIENT_SECRET: `${credentialId}-secret`,
     HOST: '127.0.0.1',
     PORT: String(appPort),
     BUS_REALTIME_CACHE_FILE: cacheFile,
@@ -183,54 +177,34 @@ async function runScenario({ primaryIds = ['primary-1', 'primary-2'], limited = 
   }
 }
 
-test('every TDX data type uses the primary pool and rotates within it on 429', async () => {
-  const result = await runScenario({ limited: ['primary-1'] });
-  assert.equal(result.initialStatus.credentials.tdxPrimaryCredentialCount, 2);
-  assert.equal(result.initialStatus.credentials.tdxReserveCredentialCount, 1);
+test('single TDX credential handles all supported data types', async () => {
+  const result = await runScenario();
+  assert.equal(result.initialStatus.credentials.tdxPrimaryCredentialCount, 1);
+  assert.equal(result.initialStatus.credentials.tdxReserveCredentialCount, 0);
   assert.equal(result.parkingResponse.status, 200);
-  assert.equal(result.parking.data[0].parkingId, 'P-primary-2');
+  assert.equal(result.parking.data[0].parkingId, 'P-single');
   assert.equal(result.detailResponse.status, 200);
   assert.equal(result.detail.data.routes[0].routeName, '307');
-  assert.ok(result.calls.some((call) => call.credentialName === 'primary-1'));
-  assert.ok(result.calls.some((call) => call.credentialName === 'primary-2'
-    && call.url.includes('/RealTimeByFrequency/')));
-  assert.ok(result.calls.some((call) => call.credentialName === 'primary-2'
-    && call.url.includes('/Parking/')));
-  assert.ok(result.calls.some((call) => call.credentialName === 'primary-2'
-    && call.url.includes('/Bus/StopOfRoute/')));
-  assert.equal(result.calls.filter((call) => call.credentialName === 'reserve').length, 0);
-  assert.equal(result.finalStatus.credentials.tdxPrimaryAvailableCredentialCount, 1);
-  assert.equal(result.finalStatus.credentials.tdxReserveAvailableCredentialCount, 1);
-});
-
-test('TDX reserve pool is used only after the entire primary pool is limited', async () => {
-  const result = await runScenario({ limited: ['primary-1', 'primary-2'] });
-  assert.equal(result.parkingResponse.status, 200);
-  assert.equal(result.parking.data[0].parkingId, 'P-reserve');
-  assert.equal(result.detailResponse.status, 200);
-  assert.ok(result.calls.some((call) => call.credentialName === 'primary-1'));
-  assert.ok(result.calls.some((call) => call.credentialName === 'primary-2'));
-  assert.ok(result.calls.some((call) => call.credentialName === 'reserve'));
-  assert.equal(result.finalStatus.credentials.tdxPrimaryAvailableCredentialCount, 0);
-  assert.equal(result.finalStatus.credentials.tdxReserveAvailableCredentialCount, 1);
-});
-
-test('a temporary primary failure tries the next primary credential before reserve', async () => {
-  const result = await runScenario({ unavailable: ['primary-1'] });
-  assert.equal(result.parkingResponse.status, 200);
-  assert.equal(result.parking.data[0].parkingId, 'P-primary-2');
-  assert.ok(result.calls.some((call) => call.credentialName === 'primary-1'));
-  assert.ok(result.calls.some((call) => call.credentialName === 'primary-2'));
+  assert.ok(result.calls.every((call) => call.credentialName === 'single'));
   assert.equal(result.calls.filter((call) => call.credentialName === 'reserve').length, 0);
 });
 
-test('rate-limit messaging appears only when primary and reserve pools are both limited', async () => {
-  const result = await runScenario({ limited: ['primary-1', 'primary-2', 'reserve'] });
+test('single TDX credential rate limit returns Chinese degraded parking response', async () => {
+  const result = await runScenario({ limited: ['single'] });
   assert.equal(result.parkingResponse.status, 200);
   assert.equal(result.parking.degraded, true);
-  assert.match(result.parking.message, /請求過多，請稍後再試/);
+  assert.equal(result.parking.message, '請求過多，請稍後再試；目前暫無停車場即時資料');
   assert.equal(result.detailResponse.status, 429);
   assert.equal(result.detail.message, '請求過多，請稍後再試');
-  assert.equal(result.finalStatus.credentials.tdxPrimaryAvailableCredentialCount, 0);
-  assert.equal(result.finalStatus.credentials.tdxReserveAvailableCredentialCount, 0);
+  assert.equal(result.finalStatus.credentials.tdxPrimaryCredentialCount, 1);
+  assert.equal(result.finalStatus.credentials.tdxReserveCredentialCount, 0);
+});
+
+test('single TDX credential unavailable returns upstream failure', async () => {
+  const result = await runScenario({ unavailable: ['single'] });
+  assert.equal(result.parkingResponse.status, 502);
+  assert.match(result.parking.message, /503|Service Unavailable/);
+  assert.equal(result.detailResponse.status, 502);
+  assert.match(result.detail.message, /503|Service Unavailable/);
+  assert.ok(result.calls.some((call) => call.credentialName === 'single'));
 });

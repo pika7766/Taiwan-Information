@@ -223,16 +223,15 @@ const PUBLIC_STATIC_FILES = new Set([
   'leaflet.markercluster.js', 'MarkerCluster.css', 'MarkerCluster.Default.css'
 ]);
 
-const tdxCredentials = loadTdxCredentials();
-const tdxCredentialPools = {
-  primary: tdxCredentials.filter((credential) => credential.pool === 'primary'),
-  reserve: tdxCredentials.filter((credential) => credential.pool === 'reserve')
-};
-const activeTdxCredentialIndexes = { primary: 0, reserve: 0 };
-let lastCredentialSwitchAt = 0;
-let backgroundPoolPausedUntil = 0; // when set, background tasks should pause using primary pool
-function isBackgroundPoolPaused() {
-  return Date.now() < backgroundPoolPausedUntil;
+const tdxCredential = loadTdxCredential();
+const tdxCredentials = tdxCredential ? [tdxCredential] : [];
+let tdxRequestPausedUntil = 0;
+function isTdxPaused() {
+  return Date.now() < tdxRequestPausedUntil;
+}
+function pauseTdxQueue(durationMs = Math.max(60_000, TDX_RATE_LIMIT_COOLDOWN_MS)) {
+  tdxRequestPausedUntil = Date.now() + durationMs;
+  console.warn(`TDX queue paused for ${Math.round(durationMs / 1000)}s until ${new Date(tdxRequestPausedUntil).toISOString()}`);
 }
 const graphHopperApiKeys = loadGraphHopperApiKeys();
 let activeGraphHopperApiKeyIndex = 0;
@@ -306,7 +305,8 @@ let lastTdxRequestAt = 0;
 const createTdxQueue = require('./tdxQueue');
 const tdxQueue = createTdxQueue({
   maxConcurrency: Math.max(2, Math.min(3, Number(process.env.TDX_MAX_CONCURRENCY) || 3)),
-  spacingMs: Math.max(150, Math.min(200, Number(process.env.TDX_REQUEST_SPACING_MS) || 180))
+  spacingMs: Math.max(150, Math.min(200, Number(process.env.TDX_REQUEST_SPACING_MS) || 180)),
+  isPaused: () => isTdxPaused()
 });
 const tdxPriorityStorage = new AsyncLocalStorage();
 
@@ -600,12 +600,11 @@ function adminStatusPayload() {
     dataGovFetchingEnabled,
     dataGovFetchingChangedAt,
     tdxCredentialCount: tdxCredentials.length,
-    tdxAvailableCredentialCount: tdxCredentials
-      .filter((credential) => Date.now() >= credential.rateLimitedUntil).length,
-    tdxPrimaryCredentialCount: tdxCredentialPools.primary.length,
-    tdxPrimaryAvailableCredentialCount: availableTdxCredentialCount('primary'),
-    tdxReserveCredentialCount: tdxCredentialPools.reserve.length,
-    tdxReserveAvailableCredentialCount: availableTdxCredentialCount('reserve'),
+    tdxAvailableCredentialCount: tdxCredential ? 1 : 0,
+    tdxPrimaryCredentialCount: tdxCredential ? 1 : 0,
+    tdxPrimaryAvailableCredentialCount: tdxCredential ? 1 : 0,
+    tdxReserveCredentialCount: 0,
+    tdxReserveAvailableCredentialCount: 0,
     graphHopperApiKeyCount: graphHopperApiKeys.length,
     graphHopperAvailableApiKeyCount: graphHopperApiKeys
       .filter((apiKey) => Date.now() >= apiKey.rateLimitedUntil).length,
@@ -812,40 +811,19 @@ function parseRetryAfterMs(value) {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
-function loadTdxCredentials() {
-  const definitions = [];
-  const addCredential = (clientId, clientSecret, label, pool) => {
-    const normalizedId = String(clientId || '').trim();
-    const normalizedSecret = String(clientSecret || '').trim();
-    if (!normalizedId || !normalizedSecret) return;
-    const existing = definitions.find((item) => (
-      item.clientId === normalizedId && item.clientSecret === normalizedSecret
-    ));
-    if (existing) return;
-    definitions.push({ clientId: normalizedId, clientSecret: normalizedSecret, label, pool });
-  };
-
-  for (let index = 1; index <= 8; index += 1) {
-    const clientId = process.env[`TDX_CLIENT_ID_${index}`]
-      || (index === 1 ? process.env.TDX_CLIENT_ID : '');
-    const clientSecret = process.env[`TDX_CLIENT_SECRET_${index}`]
-      || (index === 1 ? process.env.TDX_CLIENT_SECRET : '');
-    addCredential(
-      clientId,
-      clientSecret,
-      `credential-${index}`,
-      index === 8 ? 'reserve' : 'primary'
-    );
-  }
-
-  return definitions.map((definition, index) => ({
-    ...definition,
-    index,
+function loadTdxCredential() {
+  const clientId = String(process.env.TDX_CLIENT_ID || process.env.TDX_CLIENT_ID_1 || '').trim();
+  const clientSecret = String(process.env.TDX_CLIENT_SECRET || process.env.TDX_CLIENT_SECRET_1 || '').trim();
+  if (!clientId || !clientSecret) return null;
+  return {
+    clientId,
+    clientSecret,
+    label: 'credential-1',
+    index: 0,
     token: '',
     expiresAt: 0,
-    tokenPromise: null,
-    rateLimitedUntil: 0
-  }));
+    tokenPromise: null
+  };
 }
 
 function base64UrlJson(value) {
@@ -1213,189 +1191,57 @@ function tdxRefreshIntervalForUrl(url) {
 }
 
 function queueTdxRequest(task, options = {}) {
-  const priority = resolveTdxPriority(options);
+  if (isTdxPaused()) throw new UpstreamError('TDX queue is paused due to rate limits', 429);
   return tdxQueue.enqueue(async () => {
     const waitMs = Math.max(0, TDX_REQUEST_SPACING_MS - (Date.now() - lastTdxRequestAt));
     if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
     lastTdxRequestAt = Date.now();
     return task();
-  }, { priority, maxAttempts: options.maxAttempts });
-}
-
-function tdxCredentialPool(poolName = 'primary') {
-  return poolName === 'reserve' ? tdxCredentialPools.reserve : tdxCredentialPools.primary;
-}
-
-function availableCredentialCount(credentials) {
-  return credentials.filter((credential) => Date.now() >= credential.rateLimitedUntil).length;
-}
-
-function availableTdxCredentialCount(poolName = 'primary') {
-  return availableCredentialCount(tdxCredentialPool(poolName));
-}
-
-function markTdxCredentialRateLimited(credential, error, poolName, poolIndex, pool) {
-  // When a credential hits rate limit or auth failure, put it into a 3 minute cooldown
-  const cooldownMs = Math.max(180_000, error?.retryAfterMs || 180_000);
-  credential.rateLimitedUntil = Date.now() + cooldownMs;
-  credential.token = '';
-  credential.expiresAt = 0;
-  activeTdxCredentialIndexes[poolName] = (poolIndex + 1) % pool.length;
-  lastCredentialSwitchAt = Date.now();
-  console.warn(`TDX ${credential.label} in ${poolName} pool reached HTTP 429; switching within that pool.`);
-}
-
-function areAllTdxCredentialsRateLimited(poolName = 'primary') {
-  const pool = tdxCredentialPool(poolName);
-  return pool.length > 0
-    && pool.every((credential) => Date.now() < credential.rateLimitedUntil);
-}
-
-function pauseBackgroundPoolIfNecessary() {
-  const now = Date.now();
-  const primaryPool = tdxCredentialPools.primary;
-  if (!primaryPool.length) return;
-  if (primaryPool.every((c) => now < c.rateLimitedUntil)) {
-    // Pause background usage for 3 minutes
-    backgroundPoolPausedUntil = now + 180_000;
-    console.warn('All primary credentials are rate-limited; pausing background TDX jobs for 3 minutes.');
-  }
-}
-
-async function requestTdxUrlFromPool(url, poolName, options = {}) {
-  const pool = tdxCredentialPool(poolName);
-  if (!pool.length) {
-    throw new UpstreamError(`No TDX credential is configured for the ${poolName} pool`, 503);
-  }
-
-  let lastError = null;
-  const startingCredentialIndex = activeTdxCredentialIndexes[poolName] % pool.length;
-  for (let offset = 0; offset < pool.length; offset += 1) {
-    const index = (startingCredentialIndex + offset) % pool.length;
-    const credential = pool[index];
-    if (Date.now() < credential.rateLimitedUntil) continue;
-    // Avoid rapid switching through many credentials in under 1s
-    if (Date.now() - lastCredentialSwitchAt < 1000 && offset > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-
-    let token;
-    try {
-      token = await getTdxToken(credential);
-    } catch (error) {
-      lastError = error;
-      if (error.status === 429) {
-        markTdxCredentialRateLimited(credential, error, poolName, index, pool);
-        if (poolName === 'primary') pauseBackgroundPoolIfNecessary();
-        continue;
-      }
-      if ([400, 401, 403].includes(error.status)) {
-        // Treat authentication failures as a temporary outage for this credential
-        markTdxCredentialRateLimited(credential, error, poolName, index, pool);
-        if (poolName === 'primary') pauseBackgroundPoolIfNecessary();
-        console.error(`TDX ${credential.label} authentication failed; marking cooled and trying the next credential.`);
-        continue;
-      }
-      if (!error.status || [502, 503, 504].includes(error.status)) {
-        console.warn(`TDX ${credential.label} could not authenticate temporarily; trying the next credential.`);
-        continue;
-      }
-      throw error;
-    }
-
-    try {
-      if (/EstimatedTimeOfArrival/.test(String(url.pathname))) {
-        etaTrace({
-          source: 'requestTdxUrlFromPool',
-          url: url.toString(),
-          poolName,
-          priority: resolveTdxPriority(options),
-          event: 'outgoingRequest'
-        });
-      }
-      if (/Parking\/OffStreet\/CarPark\/City/.test(String(url.pathname))) {
-        console.error('DEBUG parkingCarPark outgoingRequest', url.toString(), poolName, resolveTdxPriority(options));
-      }
-      if (/Parking\/OffStreet\/ParkingAvailability\/City/.test(String(url.pathname))) {
-        console.error('DEBUG parkingAvailability outgoingRequest', url.toString(), poolName, resolveTdxPriority(options));
-      }
-
-      const data = await queueTdxRequest(() => {
-        if (!tdxFetchingEnabled) {
-          throw new UpstreamError('管理員已關閉運輸資訊', 503);
-        }
-        return fetchJson(url, {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
-        }, 60_000);
-      }, { priority: resolveTdxPriority(options) });
-      activeTdxCredentialIndexes[poolName] = index;
-      return data;
-    } catch (error) {
-      lastError = error;
-      if (error.status === 429) {
-        markTdxCredentialRateLimited(credential, error, poolName, index, pool);
-        continue;
-      }
-      if ([401, 403].includes(error.status)) {
-        credential.token = '';
-        credential.expiresAt = 0;
-        console.error(`TDX ${credential.label} access token was rejected; trying the next credential.`);
-        continue;
-      }
-      if (!error.status || [502, 503, 504].includes(error.status)) {
-        console.warn(`TDX ${credential.label} request failed temporarily; trying the next credential.`);
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  if (areAllTdxCredentialsRateLimited(poolName)) {
-    throw new UpstreamError(`All TDX credentials in the ${poolName} pool are rate limited`, 429);
-  }
-  throw lastError || new UpstreamError('No TDX credential is currently available', 503);
+  }, { maxAttempts: options.maxAttempts });
 }
 
 async function requestTdxUrl(url, options = {}) {
   if (!tdxFetchingEnabled) throw new UpstreamError('管理員已關閉運輸資訊', 503);
-  const priority = resolveTdxPriority(options);
+  if (!tdxCredential) throw new UpstreamError('TDX credential is not configured', 503);
+  if (isTdxPaused()) throw new UpstreamError('TDX queue is paused due to rate limits', 429);
 
-  // Background requests must not use the reserve (credential 8). If primary pool
-  // is entirely rate-limited, pause background pool for 3 minutes and fail fast.
-  if (priority === 'low') {
-    const now = Date.now();
-    if (now < backgroundPoolPausedUntil) throw new UpstreamError('Background TDX pool paused due to rate limits', 503);
-    if (areAllTdxCredentialsRateLimited('primary')) {
-      pauseBackgroundPoolIfNecessary();
-      throw new UpstreamError('Background TDX pool paused due to rate limits', 503);
-    }
-    return await requestTdxUrlFromPool(url, 'primary', options);
-  }
-
-  // High priority: prefer reserve (credential 8) first, fallback to primary only on retryable errors
-  let reserveError = null;
-  if (tdxCredentialPools.reserve.length) {
-    try {
-      return await requestTdxUrlFromPool(url, 'reserve', options);
-    } catch (error) {
-      reserveError = error;
-      if (!(error?.status && [429, 502, 503, 504].includes(error.status))) {
-        throw error;
-      }
-      // otherwise fallthrough to try primary
-    }
-  }
-
-  // Try primary pool
+  let token;
   try {
-    return await requestTdxUrlFromPool(url, 'primary', options);
-  } catch (primaryError) {
-    if (!tdxCredentialPools.reserve.length) throw primaryError;
-    // If reserve previously errored with 429 and primary also 429, surface a combined error
-    if (reserveError?.status === 429 && primaryError?.status === 429) {
-      throw new UpstreamError('All eligible TDX credentials are rate limited', 429);
+    token = await getTdxToken(tdxCredential);
+  } catch (error) {
+    if (error.status === 429) {
+      pauseTdxQueue();
     }
-    throw primaryError;
+    throw error;
+  }
+
+  try {
+    if (/EstimatedTimeOfArrival/.test(String(url.pathname))) {
+      etaTrace({
+        source: 'requestTdxUrl',
+        url: url.toString(),
+        event: 'outgoingRequest'
+      });
+    }
+    const data = await queueTdxRequest(() => {
+      if (!tdxFetchingEnabled) {
+        throw new UpstreamError('管理員已關閉運輸資訊', 503);
+      }
+      return fetchJson(url, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      }, 60_000);
+    }, { maxAttempts: 1 });
+    return data;
+  } catch (error) {
+    if (error.status === 429) {
+      pauseTdxQueue();
+    }
+    if ([401, 403].includes(error.status)) {
+      tdxCredential.token = '';
+      tdxCredential.expiresAt = 0;
+      console.error('TDX token rejected; cleared cached token.');
+    }
+    throw error;
   }
 }
 
@@ -1437,6 +1283,10 @@ async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
   }
   if (options.trackActivity !== false) entry.lastAccessAt = Date.now();
 
+  if (isTdxPaused() && entry.data) {
+    return entry.data;
+  }
+
   const priority = resolveTdxPriority({ ...options, backgroundRefresh: entry.backgroundRefresh });
   if (entry.data && options.forceRefresh !== true) {
     if (Date.now() < entry.updatedAt + entry.refreshIntervalMs) {
@@ -1448,6 +1298,10 @@ async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
       return entry.data;
     }
   }
+  if (isTdxPaused()) {
+    if (entry.data) return entry.data;
+    throw new UpstreamError('TDX queue is paused due to rate limits', 429);
+  }
   try {
     return await refreshTdxCacheEntry(entry, { priority });
   } catch (error) {
@@ -1458,6 +1312,10 @@ async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
 
 async function refreshActiveTdxCache() {
   if (!tdxFetchingEnabled) return [];
+  if (isTdxPaused()) {
+    console.warn('Skipping active TDX cache refresh because TDX queue is paused');
+    return [];
+  }
   if (tdxCacheRefreshPromise) return tdxCacheRefreshPromise;
   const now = Date.now();
   const entries = [...tdxResponseCache.values()]
@@ -1478,12 +1336,13 @@ async function refreshActiveTdxCache() {
 
 function startTdxCacheRefresh() {
   tdxCacheRefreshTimer = setInterval(() => {
-    if (isBackgroundPoolPaused()) {
-      console.warn('Skipping TDX shared cache refresh; background pool is paused');
+    if (isTdxPaused()) {
+      console.warn('Skipping TDX shared cache refresh; TDX queue is paused');
       return;
     }
     // If we just resumed from a pause, stagger the refresh to avoid thundering herd
-    if (backgroundPoolPausedUntil && Date.now() - backgroundPoolPausedUntil < 30_000) {
+    const resumedMs = Date.now() - tdxRequestPausedUntil;
+    if (resumedMs >= 0 && resumedMs < 30_000) {
       const jitter = Math.floor(Math.random() * 30_000);
       setTimeout(() => refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message)), jitter);
       return;
@@ -2339,8 +2198,8 @@ async function fetchNationwideBusSource(source) {
 
 async function refreshNationwideBusSnapshot() {
   if (!tdxFetchingEnabled) return nationwideBusSnapshot;
-  if (isBackgroundPoolPaused()) {
-    console.warn('refreshNationwideBusSnapshot: skipped because background pool is paused');
+  if (isTdxPaused()) {
+    console.warn('refreshNationwideBusSnapshot: skipped because TDX queue is paused');
     return nationwideBusSnapshot;
   }
   if (nationwideBusRefreshPromise) return nationwideBusRefreshPromise;
@@ -2388,18 +2247,19 @@ async function refreshNationwideBusSnapshot() {
 }
 
 function startNationwideBusRefresh() {
-  // Initial run respects background pause and staggers immediate resume
-  if (!isBackgroundPoolPaused()) {
+  // Initial run respects queue pause and staggers immediate resume
+  if (!isTdxPaused()) {
     refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
   } else {
-    console.warn('Initial nationwide bus refresh skipped; background pool paused');
+    console.warn('Initial nationwide bus refresh skipped; TDX queue paused');
   }
   nationwideBusRefreshTimer = setInterval(() => {
-    if (isBackgroundPoolPaused()) {
-      console.warn('Skipping nationwide bus refresh; background pool paused');
+    if (isTdxPaused()) {
+      console.warn('Skipping nationwide bus refresh; TDX queue paused');
       return;
     }
-    if (backgroundPoolPausedUntil && Date.now() - backgroundPoolPausedUntil < 30_000) {
+    const resumedMs = Date.now() - tdxRequestPausedUntil;
+    if (resumedMs >= 0 && resumedMs < 30_000) {
       const jitter = Math.floor(Math.random() * 30_000);
       setTimeout(() => refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message)), jitter);
       return;
@@ -2412,8 +2272,7 @@ function startNationwideBusRefresh() {
 async function proxyBus(requestUrl, response) {
   const scope = requestUrl.searchParams.get('scope') || 'nearby';
   const allBuses = Object.values(nationwideBusSnapshot.byCity).flat();
-  const rateLimited = areAllTdxCredentialsRateLimited('primary')
-    && (!tdxCredentialPools.reserve.length || areAllTdxCredentialsRateLimited('reserve'));
+  const rateLimited = isTdxPaused();
   const paused = !tdxFetchingEnabled;
   let data = allBuses;
   if (scope !== 'all') {
@@ -2595,24 +2454,6 @@ async function proxyBike(requestUrl, response) {
       } catch (e) {
         // Fallthrough to sendApiError
       }
-    }
-    sendApiError(response, error);
-  }
-}
-    sendApiError(response, error);
-  }
-      }))
-        .filter((station) => station.distanceMeters <= 30_000)
-        .sort((left, right) => left.distanceMeters - right.distanceMeters);
-      sendJson(response, 200, {
-        success: true,
-        degraded: true,
-        message: '請求過多，請稍後再試；目前顯示伺服器快取的 YouBike 站點位置',
-        source: '交通部 TDX 公共自行車本機站點快取',
-        observedAt: new Date().toISOString(),
-        data
-      });
-      return;
     }
     sendApiError(response, error);
   }
@@ -2922,7 +2763,7 @@ function journeyTdxUrl(pathname, parameters = {}) {
   return url;
 }
 
-function fetchJourneyTdx(pathname, parameters = {}, live = false, options = {}) {
+async function fetchJourneyTdx(pathname, parameters = {}, live = false, options = {}) {
   const refreshIntervalMs = live
     ? JOURNEY_LIVE_REFRESH_INTERVAL_MS
     : JOURNEY_STATIC_REFRESH_INTERVAL_MS;
@@ -6612,12 +6453,11 @@ const server = http.createServer(async (request, response) => {
         tdxClientSecret: Boolean(process.env.TDX_CLIENT_SECRET_1 || process.env.TDX_CLIENT_SECRET),
         tdxConfigured: tdxCredentials.length > 0,
         tdxCredentialCount: tdxCredentials.length,
-        tdxAvailableCredentialCount: tdxCredentials
-          .filter((credential) => Date.now() >= credential.rateLimitedUntil).length,
-        tdxPrimaryCredentialCount: tdxCredentialPools.primary.length,
-        tdxPrimaryAvailableCredentialCount: availableTdxCredentialCount('primary'),
-        tdxReserveCredentialCount: tdxCredentialPools.reserve.length,
-        tdxReserveAvailableCredentialCount: availableTdxCredentialCount('reserve'),
+        tdxAvailableCredentialCount: tdxCredential ? 1 : 0,
+        tdxPrimaryCredentialCount: tdxCredential ? 1 : 0,
+        tdxPrimaryAvailableCredentialCount: tdxCredential ? 1 : 0,
+        tdxReserveCredentialCount: 0,
+        tdxReserveAvailableCredentialCount: 0,
         graphHopperConfigured: graphHopperApiKeys.length > 0,
         graphHopperApiKeyCount: graphHopperApiKeys.length,
         graphHopperAvailableApiKeyCount: graphHopperApiKeys
@@ -6812,7 +6652,7 @@ server.listen(PORT, HOST, () => {
   console.log(`CWA weather: ${process.env.CWA_API_KEY ? 'configured' : 'missing CWA_API_KEY'}`);
   console.log(`Portal content: ${PORTAL_CONTENT_FILE}`);
   console.log(`FCM notifications: ${fcmIsConfigured() ? `configured topic ${FCM_TOPIC}` : 'missing service account'}`);
-  console.log(`TDX transport: ${tdxCredentials.length ? `${tdxCredentials.length} credential pair(s); ${tdxCredentialPools.primary.length} primary; ${tdxCredentialPools.reserve.length} reserve` : 'missing TDX credentials'}`);
+  console.log(`TDX transport: ${tdxCredentials.length ? `${tdxCredentials.length} credential pair(s); single-credential FIFO queue` : 'missing TDX credentials'}`);
   console.log(`GraphHopper routing: ${graphHopperApiKeys.length ? `${graphHopperApiKeys.length} API key(s)` : 'missing GRAPHHOPPER_API_KEY_1/2'}`);
   startTdxCacheRefresh();
   startNationwideBusRefresh();

@@ -872,7 +872,7 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
       const response = await fetch(`${baseUrl}/api/status`);
       return response.ok ? response.json() : null;
     });
-    assert.equal(status.credentials.tdxPrimaryCredentialCount, 5);
+    assert.equal(status.credentials.tdxPrimaryCredentialCount, 1);
     assert.equal(status.credentials.tdxReserveCredentialCount, 0);
     assert.equal(status.credentials.graphHopperApiKeyCount, 2);
     assert.equal(status.tdxStaticRefreshIntervalSeconds, 3);

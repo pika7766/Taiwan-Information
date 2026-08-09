@@ -50,7 +50,6 @@ test('admin login status returns queue status', async () => {
     assert.equal(typeof payload.queueStatus.pendingCount, 'number');
     assert.equal(typeof payload.queueStatus.activeCount, 'number');
     assert.equal(typeof payload.queueStatus.processedCount, 'number');
-    assert.equal(typeof payload.queueStatus.rateLimit429Count, 'number');
   } finally {
     child.kill('SIGTERM');
     await new Promise((resolve) => setTimeout(resolve, 300));

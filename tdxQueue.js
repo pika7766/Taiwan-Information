@@ -1,23 +1,21 @@
-// Priority request queue for TDX requests
+// FIFO request queue for TDX requests
 const DEFAULT_MAX_CONCURRENCY = 3;
 const DEFAULT_SPACING_MS = 180;
 
-function createQueue({ maxConcurrency = DEFAULT_MAX_CONCURRENCY, spacingMs = DEFAULT_SPACING_MS } = {}) {
-  const highQueue = [];
-  const lowQueue = [];
+function createQueue({ maxConcurrency = DEFAULT_MAX_CONCURRENCY, spacingMs = DEFAULT_SPACING_MS, isPaused = () => false } = {}) {
+  const queue = [];
   let activeCount = 0;
   let processedCount = 0;
-  let rateLimit429Count = 0;
   let lastStartAt = 0;
 
-  function pendingCount() { return highQueue.length + lowQueue.length; }
+  function pendingCount() { return queue.length; }
   function activeCountGetter() { return activeCount; }
   function processedCountGetter() { return processedCount; }
-  function rateLimit429CountGetter() { return rateLimit429Count; }
 
   function scheduleNext() {
     if (activeCount >= maxConcurrency) return;
-    const taskEntry = highQueue.shift() || lowQueue.shift();
+    if (isPaused()) return;
+    const taskEntry = queue.shift();
     if (!taskEntry) return;
     activeCount += 1;
     const now = Date.now();
@@ -35,24 +33,6 @@ function createQueue({ maxConcurrency = DEFAULT_MAX_CONCURRENCY, spacingMs = DEF
       processedCount += 1;
       resolve(result);
     } catch (error) {
-      // handle 429 exponential backoff and retry
-      if (error && error.status === 429) {
-        rateLimit429Count += 1;
-        const retryAfter = error.retryAfterMs || 0;
-        const attempt = (entry.attempts || 0) + 1;
-        const backoff = retryAfter || Math.min(60_000, Math.pow(2, attempt) * 250);
-        if (attempt <= (entry.maxAttempts || 5)) {
-          entry.attempts = attempt;
-          // requeue with delay
-          setTimeout(() => {
-            if (entry.priority === 'high') highQueue.unshift(entry); else lowQueue.unshift(entry);
-            scheduleNext();
-          }, backoff + Math.round(Math.random() * 200));
-          activeCount -= 1;
-          scheduleNext();
-          return;
-        }
-      }
       reject(error);
     } finally {
       if (activeCount > 0) activeCount -= 1;
@@ -66,19 +46,17 @@ function createQueue({ maxConcurrency = DEFAULT_MAX_CONCURRENCY, spacingMs = DEF
         fn,
         resolve,
         reject,
-        priority: options.priority === 'high' ? 'high' : 'low',
-        maxAttempts: Number.isFinite(options.maxAttempts) ? options.maxAttempts : 5,
-        attempts: 0
+        maxAttempts: Number.isFinite(options.maxAttempts) ? options.maxAttempts : 1
       };
-      if (entry.priority === 'high') highQueue.push(entry); else lowQueue.push(entry);
+      queue.push(entry);
       scheduleNext();
     });
   }
 
   return {
     enqueue,
-    status: () => ({ pendingCount: pendingCount(), activeCount: activeCountGetter(), processedCount: processedCountGetter(), rateLimit429Count: rateLimit429CountGetter() }),
-    _internal: { highQueue, lowQueue }
+    status: () => ({ pendingCount: pendingCount(), activeCount: activeCountGetter(), processedCount: processedCountGetter() }),
+    _internal: { queue }
   };
 }
 
