@@ -532,3 +532,101 @@ RESPONSE 2026-08-09T06:51:22.136Z {"origin":"新市大營郵局","destination":"
 RESULTS {"time":"2026-08-09T06:51:27.153Z","summary":[]}
 FILTERED 2026-08-09T06:51:27.154Z before=0 after=0
 RESPONSE 2026-08-09T06:51:27.155Z {"origin":"新市大營郵局","destination":"高雄夢時代","modes":"car,scooter,bus,tra,metro,thsr","results":[]}
+{"time":"2026-08-09T07:25:48.451Z","modes":["car"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:25:48.452Z","summary":[{"mode":"car","modeSequence":["car"],"legs":[]}]}
+FILTERED 2026-08-09T07:25:48.452Z before=1 after=1
+{"time":"2026-08-09T07:25:48.664Z","modes":["car"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:25:48.665Z","summary":[]}
+{"time":"2026-08-09T07:25:57.754Z","modes":["car","scooter"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:25:57.756Z","summary":[{"mode":"car","modeSequence":["car"],"legs":[]},{"mode":"scooter","modeSequence":["scooter"],"legs":[]}]}
+FILTERED 2026-08-09T07:25:57.757Z before=2 after=2
+RESPONSE 2026-08-09T07:25:57.758Z {"origin":"臺北車站","destination":"板橋車站","modes":"car,scooter","results":[{"mode":"car","modeSequence":["car"]},{"mode":"scooter","modeSequence":["scooter"]}]}
+{"time":"2026-08-09T07:25:57.773Z","modes":["walk","bike"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:25:57.774Z","summary":[{"mode":"walk","modeSequence":["walk"],"legs":[]},{"mode":"bike","modeSequence":["bike"],"legs":[]}]}
+FILTERED 2026-08-09T07:25:57.776Z before=2 after=2
+{"time":"2026-08-09T07:25:58.320Z","modes":["bus"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:25:58.322Z","summary":[{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","walk"]},{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","walk"]},{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","bus","walk"]},{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","bus","walk"]},{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","bus","walk"]}]}
+FILTERED 2026-08-09T07:25:58.323Z before=5 after=5
+FILTERED 2026-08-09T07:25:58.339Z before=5 after=5
+{"time":"2026-08-09T07:26:01.615Z","modes":["bus","tra","metro","thsr"],"multimodalCount":5,"multimodalSequences":[["bus","tra","metro"],["tra","metro"],["bus","tra","bus"],["tra","bus"],["bus","tra","bus"]]}
+RESULTS {"time":"2026-08-09T07:26:01.616Z","summary":[{"mode":"multimodal","modeSequence":["bus","tra","metro"],"legs":["walk","bus","walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["bus","tra","bus"],"legs":["walk","bus","walk","tra","walk","bus","bus","walk"]},{"mode":"multimodal","modeSequence":["tra","bus"],"legs":["walk","tra","walk","bus","bus","walk"]},{"mode":"multimodal","modeSequence":["bus","tra","bus"],"legs":["walk","bus","walk","tra","walk","bus","bus","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"thsr","modeSequence":["thsr"],"legs":["walk","thsr","walk"]}]}
+FILTERED 2026-08-09T07:26:01.617Z before=12 after=12
+{"time":"2026-08-09T07:26:04.245Z","modes":["car","scooter","bus","tra","metro","thsr"],"multimodalCount":5,"multimodalSequences":[["bus","tra","car"],["car","tra","metro"],["scooter","tra","metro"],["bus","tra","metro"],["tra","metro"]]}
+RESULTS {"time":"2026-08-09T07:26:04.246Z","summary":[{"mode":"multimodal","modeSequence":["bus","tra","car"],"legs":["walk","bus","walk","tra","car"]},{"mode":"multimodal","modeSequence":["car","tra","metro"],"legs":["car","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["scooter","tra","metro"],"legs":["scooter","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["bus","tra","metro"],"legs":["walk","bus","walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]},{"mode":"car","modeSequence":["car"],"legs":[]},{"mode":"scooter","modeSequence":["scooter"],"legs":[]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"thsr","modeSequence":["thsr"],"legs":["walk","thsr","walk"]}]}
+FILTERED 2026-08-09T07:26:04.248Z before=14 after=12
+RESPONSE 2026-08-09T07:26:04.248Z {"origin":"混合運具起點","destination":"混合運具終點","modes":"car,scooter,bus,tra,metro,thsr","results":[{"mode":"multimodal","modeSequence":["scooter","tra","metro"]},{"mode":"multimodal","modeSequence":["bus","tra","metro"]},{"mode":"multimodal","modeSequence":["tra","metro"]},{"mode":"car","modeSequence":["car"]},{"mode":"scooter","modeSequence":["scooter"]},{"mode":"tra","modeSequence":["tra"]},{"mode":"tra","modeSequence":["tra"]},{"mode":"metro","modeSequence":["metro"]},{"mode":"metro","modeSequence":["metro"]},{"mode":"metro","modeSequence":["metro"]},{"mode":"metro","modeSequence":["metro"]},{"mode":"thsr","modeSequence":["thsr"]}]}
+{"time":"2026-08-09T07:26:07.533Z","modes":["bus","tra","metro"],"multimodalCount":3,"multimodalSequences":[["tra","bus"],["tra","metro"],["tra","metro","bus"]]}
+RESULTS {"time":"2026-08-09T07:26:07.534Z","summary":[{"mode":"multimodal","modeSequence":["tra","bus"],"legs":["walk","tra","walk","bus","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro","bus"],"legs":["walk","tra","walk","metro","walk","walk","bus","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]}]}
+FILTERED 2026-08-09T07:26:07.535Z before=6 after=6
+{"time":"2026-08-09T07:26:07.561Z","modes":["bus","tra","metro"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:26:07.562Z","summary":[{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]}]}
+FILTERED 2026-08-09T07:26:07.563Z before=3 after=3
+{"time":"2026-08-09T07:26:09.864Z","modes":["car","scooter","bus","tra","metro","thsr"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:26:09.865Z","summary":[{"mode":"car","modeSequence":["car"],"legs":[]},{"mode":"scooter","modeSequence":["scooter"],"legs":[]}]}
+FILTERED 2026-08-09T07:26:09.866Z before=2 after=2
+RESPONSE 2026-08-09T07:26:09.867Z {"origin":"新市大營郵局","destination":"高雄夢時代","modes":"car,scooter,bus,tra,metro,thsr","results":[{"mode":"car","modeSequence":["car"]},{"mode":"scooter","modeSequence":["scooter"]}]}
+{"time":"2026-08-09T07:26:12.364Z","modes":["car","scooter","bus","tra","metro","thsr"],"multimodalCount":5,"multimodalSequences":[["car","tra","metro"],["scooter","tra","metro"],["car","tra","metro"],["scooter","tra","metro"],["tra","metro"]]}
+RESULTS {"time":"2026-08-09T07:26:12.366Z","summary":[{"mode":"multimodal","modeSequence":["car","tra","metro"],"legs":["car","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["scooter","tra","metro"],"legs":["scooter","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["car","tra","metro"],"legs":["car","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["scooter","tra","metro"],"legs":["scooter","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]}]}
+FILTERED 2026-08-09T07:26:12.367Z before=5 after=3
+RESPONSE 2026-08-09T07:26:12.367Z {"origin":"新市大營郵局","destination":"高雄夢時代","modes":"car,scooter,bus,tra,metro,thsr","results":[{"mode":"multimodal","modeSequence":["scooter","tra","metro"]},{"mode":"multimodal","modeSequence":["scooter","tra","metro"]},{"mode":"multimodal","modeSequence":["tra","metro"]}]}
+{"time":"2026-08-09T07:26:12.476Z","modes":["bus","tra","metro","thsr"],"multimodalCount":3,"multimodalSequences":[["tra","bus"],["tra","metro"],["tra","metro","bus"]]}
+RESULTS {"time":"2026-08-09T07:26:12.477Z","summary":[{"mode":"multimodal","modeSequence":["tra","bus"],"legs":["walk","tra","walk","bus","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro","bus"],"legs":["walk","tra","walk","metro","walk","walk","bus","walk"]}]}
+FILTERED 2026-08-09T07:26:12.478Z before=3 after=3
+{"time":"2026-08-09T07:26:14.959Z","modes":["bus","tra","metro","thsr"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:26:14.960Z","summary":[{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"thsr","modeSequence":["thsr"],"legs":["walk","thsr","walk"]}]}
+FILTERED 2026-08-09T07:26:14.961Z before=2 after=2
+{"time":"2026-08-09T07:26:19.975Z","modes":["car","tra"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:26:19.976Z","summary":[{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]}]}
+FILTERED 2026-08-09T07:26:19.977Z before=1 after=1
+{"time":"2026-08-09T07:26:24.258Z","modes":["car","tra"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:26:24.258Z","summary":[{"mode":"car","modeSequence":["car"],"legs":[]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]}]}
+FILTERED 2026-08-09T07:26:24.258Z before=2 after=2
+{"time":"2026-08-09T07:27:45.205Z","modes":["car"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:27:45.206Z","summary":[{"mode":"car","modeSequence":["car"],"legs":[]}]}
+FILTERED 2026-08-09T07:27:45.207Z before=1 after=1
+{"time":"2026-08-09T07:27:45.412Z","modes":["car"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:27:45.412Z","summary":[]}
+{"time":"2026-08-09T07:27:54.488Z","modes":["car","scooter"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:27:54.490Z","summary":[{"mode":"car","modeSequence":["car"],"legs":[]},{"mode":"scooter","modeSequence":["scooter"],"legs":[]}]}
+FILTERED 2026-08-09T07:27:54.491Z before=2 after=2
+RESPONSE 2026-08-09T07:27:54.491Z {"origin":"臺北車站","destination":"板橋車站","modes":"car,scooter","results":[{"mode":"car","modeSequence":["car"]},{"mode":"scooter","modeSequence":["scooter"]}]}
+{"time":"2026-08-09T07:27:54.514Z","modes":["walk","bike"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:27:54.515Z","summary":[{"mode":"walk","modeSequence":["walk"],"legs":[]},{"mode":"bike","modeSequence":["bike"],"legs":[]}]}
+FILTERED 2026-08-09T07:27:54.515Z before=2 after=2
+{"time":"2026-08-09T07:27:55.056Z","modes":["bus"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:27:55.057Z","summary":[{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","walk"]},{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","walk"]},{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","bus","walk"]},{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","bus","walk"]},{"mode":"bus","modeSequence":["bus"],"legs":["walk","bus","bus","walk"]}]}
+FILTERED 2026-08-09T07:27:55.058Z before=5 after=5
+FILTERED 2026-08-09T07:27:55.074Z before=5 after=5
+{"time":"2026-08-09T07:27:58.253Z","modes":["bus","tra","metro","thsr"],"multimodalCount":5,"multimodalSequences":[["bus","tra","metro"],["tra","metro"],["bus","tra","bus"],["tra","bus"],["bus","tra","bus"]]}
+RESULTS {"time":"2026-08-09T07:27:58.253Z","summary":[{"mode":"multimodal","modeSequence":["bus","tra","metro"],"legs":["walk","bus","walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["bus","tra","bus"],"legs":["walk","bus","walk","tra","walk","bus","bus","walk"]},{"mode":"multimodal","modeSequence":["tra","bus"],"legs":["walk","tra","walk","bus","bus","walk"]},{"mode":"multimodal","modeSequence":["bus","tra","bus"],"legs":["walk","bus","walk","tra","walk","bus","bus","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"thsr","modeSequence":["thsr"],"legs":["walk","thsr","walk"]}]}
+FILTERED 2026-08-09T07:27:58.254Z before=12 after=12
+{"time":"2026-08-09T07:28:00.958Z","modes":["car","scooter","bus","tra","metro","thsr"],"multimodalCount":5,"multimodalSequences":[["bus","tra","car"],["car","tra","metro"],["scooter","tra","metro"],["bus","tra","metro"],["tra","metro"]]}
+RESULTS {"time":"2026-08-09T07:28:00.958Z","summary":[{"mode":"multimodal","modeSequence":["bus","tra","car"],"legs":["walk","bus","walk","tra","car"]},{"mode":"multimodal","modeSequence":["car","tra","metro"],"legs":["car","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["scooter","tra","metro"],"legs":["scooter","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["bus","tra","metro"],"legs":["walk","bus","walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]},{"mode":"car","modeSequence":["car"],"legs":[]},{"mode":"scooter","modeSequence":["scooter"],"legs":[]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"metro","modeSequence":["metro"],"legs":["walk","metro","walk"]},{"mode":"thsr","modeSequence":["thsr"],"legs":["walk","thsr","walk"]}]}
+FILTERED 2026-08-09T07:28:00.958Z before=14 after=12
+RESPONSE 2026-08-09T07:28:00.959Z {"origin":"混合運具起點","destination":"混合運具終點","modes":"car,scooter,bus,tra,metro,thsr","results":[{"mode":"multimodal","modeSequence":["scooter","tra","metro"]},{"mode":"multimodal","modeSequence":["bus","tra","metro"]},{"mode":"multimodal","modeSequence":["tra","metro"]},{"mode":"car","modeSequence":["car"]},{"mode":"scooter","modeSequence":["scooter"]},{"mode":"tra","modeSequence":["tra"]},{"mode":"tra","modeSequence":["tra"]},{"mode":"metro","modeSequence":["metro"]},{"mode":"metro","modeSequence":["metro"]},{"mode":"metro","modeSequence":["metro"]},{"mode":"metro","modeSequence":["metro"]},{"mode":"thsr","modeSequence":["thsr"]}]}
+{"time":"2026-08-09T07:28:04.965Z","modes":["bus","tra","metro"],"multimodalCount":3,"multimodalSequences":[["tra","bus"],["tra","metro"],["tra","metro","bus"]]}
+RESULTS {"time":"2026-08-09T07:28:04.965Z","summary":[{"mode":"multimodal","modeSequence":["tra","bus"],"legs":["walk","tra","walk","bus","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro","bus"],"legs":["walk","tra","walk","metro","walk","walk","bus","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]}]}
+FILTERED 2026-08-09T07:28:04.966Z before=6 after=6
+{"time":"2026-08-09T07:28:04.976Z","modes":["bus","tra","metro"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:28:04.976Z","summary":[{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]}]}
+FILTERED 2026-08-09T07:28:04.976Z before=3 after=3
+{"time":"2026-08-09T07:28:06.594Z","modes":["car","scooter","bus","tra","metro","thsr"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:28:06.595Z","summary":[{"mode":"car","modeSequence":["car"],"legs":[]},{"mode":"scooter","modeSequence":["scooter"],"legs":[]}]}
+FILTERED 2026-08-09T07:28:06.595Z before=2 after=2
+RESPONSE 2026-08-09T07:28:06.595Z {"origin":"新市大營郵局","destination":"高雄夢時代","modes":"car,scooter,bus,tra,metro,thsr","results":[{"mode":"car","modeSequence":["car"]},{"mode":"scooter","modeSequence":["scooter"]}]}
+{"time":"2026-08-09T07:28:08.897Z","modes":["car","scooter","bus","tra","metro","thsr"],"multimodalCount":5,"multimodalSequences":[["car","tra","metro"],["scooter","tra","metro"],["car","tra","metro"],["scooter","tra","metro"],["tra","metro"]]}
+RESULTS {"time":"2026-08-09T07:28:08.898Z","summary":[{"mode":"multimodal","modeSequence":["car","tra","metro"],"legs":["car","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["scooter","tra","metro"],"legs":["scooter","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["car","tra","metro"],"legs":["car","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["scooter","tra","metro"],"legs":["scooter","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]}]}
+FILTERED 2026-08-09T07:28:08.898Z before=5 after=3
+RESPONSE 2026-08-09T07:28:08.899Z {"origin":"新市大營郵局","destination":"高雄夢時代","modes":"car,scooter,bus,tra,metro,thsr","results":[{"mode":"multimodal","modeSequence":["scooter","tra","metro"]},{"mode":"multimodal","modeSequence":["scooter","tra","metro"]},{"mode":"multimodal","modeSequence":["tra","metro"]}]}
+{"time":"2026-08-09T07:28:08.973Z","modes":["bus","tra","metro","thsr"],"multimodalCount":3,"multimodalSequences":[["tra","bus"],["tra","metro"],["tra","metro","bus"]]}
+RESULTS {"time":"2026-08-09T07:28:08.974Z","summary":[{"mode":"multimodal","modeSequence":["tra","bus"],"legs":["walk","tra","walk","bus","walk"]},{"mode":"multimodal","modeSequence":["tra","metro"],"legs":["walk","tra","walk","metro","walk"]},{"mode":"multimodal","modeSequence":["tra","metro","bus"],"legs":["walk","tra","walk","metro","walk","walk","bus","walk"]}]}
+FILTERED 2026-08-09T07:28:08.974Z before=3 after=3
+{"time":"2026-08-09T07:28:10.936Z","modes":["bus","tra","metro","thsr"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:28:10.936Z","summary":[{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]},{"mode":"thsr","modeSequence":["thsr"],"legs":["walk","thsr","walk"]}]}
+FILTERED 2026-08-09T07:28:10.937Z before=2 after=2
+{"time":"2026-08-09T07:28:15.963Z","modes":["car","tra"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:28:15.964Z","summary":[{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]}]}
+FILTERED 2026-08-09T07:28:15.964Z before=1 after=1
+{"time":"2026-08-09T07:28:18.466Z","modes":["car","tra"],"multimodalCount":0,"multimodalSequences":[]}
+RESULTS {"time":"2026-08-09T07:28:18.466Z","summary":[{"mode":"car","modeSequence":["car"],"legs":[]},{"mode":"tra","modeSequence":["tra"],"legs":["walk","tra","walk"]}]}
+FILTERED 2026-08-09T07:28:18.467Z before=2 after=2

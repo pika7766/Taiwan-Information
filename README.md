@@ -29,10 +29,10 @@
 - 每筆公車、臺鐵、高鐵與捷運方案都可在主地圖預覽路線，轉乘站以專用標記顯示；行駛中的單一班次另可進入追蹤模式。
 - 路線預覽或追蹤時會中止瀏覽器的一般交通圖層請求並隱藏其他圖層，結束後精確還原進入前的圖層開關。
 - 旅運站點、時刻表及票價由後端每 5 分鐘更新共用快取；官方即時看板每 12 秒更新共用快取。
-- TDX `_1` 至 `_7` 統一組成優先池，所有交通資料都先使用優先池；優先池全部被限流或無法使用時，才改用 `_8` 預備池。
+- TDX 採單一憑證模式，所有交通資料使用同一組 `TDX_CLIENT_ID` 與 `TDX_CLIENT_SECRET`；憑證遇到 `429` 限流時，伺服器會進入 FIFO 隊列暫停機制，並在冷卻期後恢復，期間回傳伺服器快取資料降級服務。
 - 單一來源更新失敗時保留上一次成功資料，不會清空既有公車圖層。
 - 全臺快照儲存在記憶體與 JSON 檔案；地圖端只下載目前視窗附近的公車，降低手機渲染負擔。
-- 顯示 TDX 道路即時路況、道路速率及壅塞狀態。
+- 即時路況功能目前暫不開放，敬請見諒。
 - 顯示 YouBike 站點、可借車輛、可還空位及服務狀態。
 - 顯示 TDX 路外停車場、剩餘車位、總車位、地址、費率與營運狀態。
 - 公車站牌與 YouBike 站點可收藏。
@@ -73,7 +73,6 @@
 | 天氣資料 | 中央氣象署開放資料 API |
 | 政府資料 | 政府資料開放平臺 API |
 | 地理編碼 | OpenStreetMap Nominatim |
-| 道路資料 | Overpass API |
 | 部署 | Render Web Service、GitHub 自動部署 |
 | 儲存 | 記憶體快取、JSON 磁碟快照、Render Persistent Disk（選用） |
 
@@ -82,14 +81,14 @@
 1. 前端建立 Leaflet 地圖，但不立即請求交通圖層。
 2. 瀏覽器完成定位判定後，選擇使用者位置或台北 101。
 3. 設定檔與定位皆完成後，前端向同網域的 Node.js API 請求圖層資料。
-4. 後端代理 CWA、TDX、data.gov.tw、Nominatim 及 Overpass，並統一處理快取與錯誤。
+4. 後端代理 CWA、TDX、data.gov.tw 及 Nominatim，並統一處理快取與錯誤。道路線形與即時路況功能目前暫不開放。
 5. 後端每 12 秒更新所有 TDX 動態資料，每 5 分鐘更新所有 TDX 固定資料，所有使用者讀取同一份共享快取。
 6. 最近使用的公車、捷運與鐵路資料會建立路線圖並存入記憶體及 JSON 快照；路線圖到期時由背景排程更新，查詢仍先使用目前版本。
-7. TDX 單組憑證遇到 `429` 時依設定順序切換，只有全部憑證都被限流才進入「請求過多」錯誤或快取降級狀態。
+7. TDX 採單一憑證 + FIFO 隊列模式；憑證遇到 `429` 限流時，伺服器進入暫停機制，期間回傳伺服器快取資料降級服務，冷卻後自動恢復。
 8. 外部服務失敗時保留既有快取，讓地圖與其他功能仍可繼續使用。
 9. 伺服器每分鐘集中取得全臺 CWA 緊急資訊，以穩定雜湊 ID 去重後寫入內容檔；使用者裝置只讀本站 API。
 
-TDX 官方 Swagger 顯示，市區公車、YouBike、縣市路況與縣市停車場只提供 `City/{City}` 端點，沒有全臺單一請求端點。系統因此採用「每縣市一次取得完整資料、伺服器共享快取」；同一縣市不會因使用者數量或地圖移動重複請求。若固定掃描 22 縣市，單次週期反而會產生上百次 TDX 請求，因此不採用全臺強制預抓。全臺公車動態則維持既有的伺服器彙整快照。
+TDX 官方 Swagger 顯示，市區公車、YouBike、縣市停車場只提供 `City/{City}` 端點，沒有全臺單一請求端點。系統因此採用「每縣市一次取得完整資料、伺服器共享快取」；同一縣市不會因使用者數量或地圖移動重複請求。若固定掃描 22 縣市，單次週期反而會產生上百次 TDX 請求，因此不採用全臺強制預抓。全臺公車動態則維持既有的伺服器彙整快照。
 
 ### 路線規劃架構
 
@@ -102,7 +101,7 @@ Google 地圖與 Apple 地圖連結會帶入解析後的起點與終點；真正
 - 公車、YouBike、停車場與道路即時資料由 TDX 提供，實際更新速度與完整度受 TDX 方案額度及來源品質影響。
 - 臺鐵追蹤顯示 TDX 最近離開或經過的車站，不是連續 GPS；高鐵沒有逐車 GPS，位置依時刻表推估。
 - 多數捷運系統沒有可識別單一班次的車輛位置，追蹤位置依時刻表與站間時間推估；高雄輕軌有官方位置時優先顯示。
-- 天氣資料由中央氣象署提供；地址與道路查詢分別依賴 Nominatim 及 Overpass API。
+- 天氣資料由中央氣象署提供；地址查詢依賴 Nominatim。道路線形與即時路況功能目前暫不開放。
 - Render 免費方案可能會休眠，服務重新喚醒時第一個請求需要較長時間。
 - 未掛載 Persistent Disk 時，Render 重新部署或重建執行個體後會重新建立公車快照與旅運路線圖。
 - 瀏覽器定位及系統分享功能需要 HTTPS、瀏覽器支援與使用者授權。
@@ -134,9 +133,8 @@ Google 地圖與 Apple 地圖連結會帶入解析後的起點與終點；真正
 | `ADMIN_USERNAME` | 否 | 管理員帳號，預設 `admin` |
 | `ADMIN_PASSWORD` | 否 | 管理員密碼，預設 `7766`；正式環境建議覆寫 |
 | `TDX_FETCH_ENABLED` | 否 | 服務啟動時是否允許取得 TDX，預設 `true` |
-| `TDX_CLIENT_ID_1`～`TDX_CLIENT_ID_7` | 是 | TDX 優先池 OAuth 用戶端 ID；可只設定目前持有的組數 |
-| `TDX_CLIENT_SECRET_1`～`TDX_CLIENT_SECRET_7` | 是 | 與優先池 ID 同編號的 TDX 用戶端密鑰 |
-| `TDX_CLIENT_ID_8`、`TDX_CLIENT_SECRET_8` | 建議 | TDX 預備池；只在優先池全部無法完成請求時使用 |
+| `TDX_CLIENT_ID` | 是 | TDX OAuth 用戶端 ID（單一憑證） |
+| `TDX_CLIENT_SECRET` | 是 | 對應的 TDX 用戶端密鑰（單一憑證） |
 | `GRAPHHOPPER_API_KEY_1`、`GRAPHHOPPER_API_KEY_2` | 否 | 僅直接呼叫後端 `/api/route/planner` 道路方案時需要；網站時間估算不使用。第一組限流或失效時自動切換第二組 |
 | `TDX_REFRESH_INTERVAL_MS` | 否 | TDX 共用快取背景排程間隔，預設 `5000` 毫秒 |
 | `TDX_DYNAMIC_REFRESH_INTERVAL_MS` | 否 | 所有 TDX 動態資料更新間隔，預設 `12000` 毫秒 |
@@ -165,13 +163,13 @@ FCM 建議在 Render 的 **Secret Files** 新增 Firebase 服務帳戶 JSON，�
 需在 Render 的 Environment 頁面分別新增以下 Key；Value 填入各組實際帳號與密鑰：
 
 ```text
-TDX_CLIENT_ID_1 ... TDX_CLIENT_ID_8
-TDX_CLIENT_SECRET_1 ... TDX_CLIENT_SECRET_8
+TDX_CLIENT_ID
+TDX_CLIENT_SECRET
 GRAPHHOPPER_API_KEY_1
 GRAPHHOPPER_API_KEY_2
 ```
 
-每一組 TDX ID 與 Secret 必須使用相同編號成對設定。`_1` 至 `_7` 全部屬於優先池，固定資料、即時資料及公車詳細資料都會從這個池依序取用；只有優先池目前沒有任何可用帳密時，才切換到只含 `_8` 的預備池。舊的 `TDX_SHARED_CLIENT_ID`、`TDX_SHARED_CLIENT_SECRET` 與 `TDX_CREDENTIALS_JSON` 已不再使用，可從 Render 移除。
+每一組 TDX ID 與 Secret 成對設定，系統僅使用單一憑證組合。舊的 `TDX_SHARED_CLIENT_ID`、`TDX_SHARED_CLIENT_SECRET`、`TDX_CREDENTIALS_JSON` 與 `TDX_CLIENT_ID_1` 至 `TDX_CLIENT_ID_8` 已不再使用，可從 Render 移除。
 
 GraphHopper 的兩組 key 分別填入 `GRAPHHOPPER_API_KEY_1` 與 `GRAPHHOPPER_API_KEY_2`。金鑰只由 Node.js 後端送往 GraphHopper，不會出現在瀏覽器回應或前端程式碼。不要把實際 TDX 帳密或 GraphHopper key 寫入 GitHub、`README.md` 或 `credentials-template.txt`。
 

@@ -2617,139 +2617,19 @@ async function proxyParking(requestUrl, response) {
 }
 
 async function proxyRoadNetwork(requestUrl, response) {
-  try {
-    const south = Number(requestUrl.searchParams.get('south'));
-    const west = Number(requestUrl.searchParams.get('west'));
-    const north = Number(requestUrl.searchParams.get('north'));
-    const east = Number(requestUrl.searchParams.get('east'));
-    const zoom = Number(requestUrl.searchParams.get('zoom'));
-    if (![south, west, north, east].every(Number.isFinite)
-      || south < 21.5 || north > 26 || west < 119 || east > 122.5
-      || south >= north || west >= east) {
-      throw new UpstreamError('Valid Taiwan viewport bounds are required', 400);
-    }
-    const highwayClasses = zoom >= 15
-      ? 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service'
-      : zoom >= 13
-        ? 'motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street'
-        : zoom >= 11
-          ? 'motorway|trunk|primary|secondary|tertiary'
-          : 'motorway|trunk|primary';
-    const roundedBounds = [south, west, north, east].map((value) => value.toFixed(4));
-    const cacheKey = `${roundedBounds.join(',')}|${highwayClasses}`;
-    const cached = roadNetworkCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) {
-      sendJson(response, 200, cached.payload);
-      return;
-    }
-    const selectors = zoom >= 14
-      ? `way["highway"](${roundedBounds.join(',')});`
-      : highwayClasses.split('|')
-        .map((highway) => `way["highway"="${highway}"](${roundedBounds.join(',')});`)
-        .join('');
-    const query = `[out:json][timeout:35];(${selectors});out tags geom;`;
-    let payload = null;
-    let lastError = null;
-    for (const overpassEndpoint of OVERPASS_FALLBACK_ENDPOINTS) {
-      try {
-        payload = await fetchJson(overpassEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            Accept: 'application/json',
-            'User-Agent': 'TaiwanSmartLifePortal/1.0 (local development application)'
-          },
-          body: new URLSearchParams({ data: query })
-        }, 50_000);
-        break;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    if (!payload) throw lastError || new UpstreamError('Road network service is unavailable', 502);
-    const allowedHighways = new Set(highwayClasses.split('|'));
-    const roads = asArray(payload, ['elements']).filter((way) => allowedHighways.has(way.tags?.highway)).map((way) => ({
-      id: way.id,
-      roadName: way.tags?.name || way.tags?.ref || '未命名道路',
-      highway: way.tags?.highway || '',
-      line: (way.geometry || []).map((point) => [Number(point.lat), Number(point.lon)])
-        .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))
-    })).filter((road) => road.line.length >= 2);
-    const result = {
-      success: true,
-      source: 'OpenStreetMap Overpass 道路線形',
-      observedAt: new Date().toISOString(),
-      data: { roads }
-    };
-    roadNetworkCache.set(cacheKey, { payload: result, expiresAt: Date.now() + 5 * 60 * 1000 });
-    sendJson(response, 200, result);
-  } catch (error) {
-    sendApiError(response, error);
-  }
+  // 即時路況/道路線形功能已暫時停用，不向 Overpass API 或任何外部服務發送請求
+  sendJson(response, 200, {
+    success: false,
+    message: '此功能暫不開放，造成不便敬請見諒。'
+  });
 }
 
 async function proxyTraffic(requestUrl, response) {
-  try {
-    const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
-    const requestedRadius = Number(requestUrl.searchParams.get('radius'));
-    const radiusMeters = Number.isFinite(requestedRadius) ? Math.min(30_000, Math.max(1000, requestedRadius)) : 5000;
-    const fullCityParameters = { '$top': 10000 };
-    const sectionsPayload = await fetchTdxCity(
-      'v2/Road/Traffic/Section/City', city, fullCityParameters, TDX_STATIC_REFRESH_INTERVAL_MS
-    );
-    const shapesPayload = await fetchTdxCity(
-      'v2/Road/Traffic/SectionShape/City', city, fullCityParameters, TDX_STATIC_REFRESH_INTERVAL_MS
-    );
-    const livePayload = await fetchTdxCity(
-      'v2/Road/Traffic/Live/City', city, fullCityParameters, TDX_DYNAMIC_REFRESH_INTERVAL_MS
-    );
-    const sections = asArray(sectionsPayload, ['Sections']);
-    const shapes = asArray(shapesPayload, ['SectionShapes']);
-    const liveItems = asArray(livePayload, ['LiveTraffics']);
-    const sectionById = new Map(sections.map((section) => [section.SectionID, section]));
-    const liveById = new Map(liveItems.map((item) => [item.SectionID, item]));
-    const roads = shapes.map((shape) => {
-      const lines = parseWktLines(shape.Geometry);
-      const isNearby = lines.some((line) => line.some(([roadLat, roadLng]) =>
-        haversineMeters(lat, lng, roadLat, roadLng) <= radiusMeters));
-      if (!isNearby) return null;
-      const section = sectionById.get(shape.SectionID) || {};
-      const live = liveById.get(shape.SectionID) || {};
-      const speed = Number(live.TravelSpeed);
-      const status = trafficStatus(live.CongestionLevel, speed);
-      return {
-        sectionId: shape.SectionID,
-        roadName: section.RoadName || section.SectionName || shape.SectionID,
-        sectionName: section.SectionName || '',
-        lines,
-        speed: Number.isFinite(speed) && speed >= 0 ? speed : null,
-        congestionLevel: live.CongestionLevel ?? null,
-        status: status.key,
-        statusLabel: status.label,
-        updateTime: live.DataCollectTime || livePayload.UpdateTime || null
-      };
-    }).filter(Boolean);
-    sendJson(response, 200, {
-      success: true,
-      source: '交通部 TDX 道路交通即時資訊',
-      observedAt: new Date().toISOString(),
-      data: { roads }
-    });
-  } catch (error) {
-    if (error.status === 429) {
-      sendJson(response, 200, {
-        success: true,
-        degraded: true,
-        message: '請求過多，請稍後再試；目前暫無即時壅塞資料',
-        source: '交通部 TDX 道路交通降級模式',
-        observedAt: new Date().toISOString(),
-        data: { roads: [] }
-      });
-      return;
-    }
-    sendApiError(response, error);
-  }
+  // 即時路況功能已暫時停用，不向 TDX 或任何外部服務發送請求
+  sendJson(response, 200, {
+    success: false,
+    message: '此功能暫不開放，造成不便敬請見諒。'
+  });
 }
 
 const JOURNEY_MODE_LABELS = { bus: '公車', tra: '臺鐵', thsr: '高鐵', metro: '捷運' };
@@ -2809,7 +2689,7 @@ async function fetchJourneyTdx(pathname, parameters = {}, live = false, options 
         });
         cached.pending = pending;
       }
-      return cached.data;
+      return cached.pending;
     }
     if (cached?.pending) {
       etaTrace({ source: 'fetchJourneyTdx', cacheKey, event: 'pendingHit' });

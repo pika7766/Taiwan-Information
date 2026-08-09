@@ -668,3 +668,113 @@
     at fetchJson (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:779:29)
     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
     at async execute (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\tdxQueue.js:32:22)
+2026-08-09T07:25:48.471Z API request failed: UpstreamError: 標題 僅能使用純文字
+    at announcementText (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:976:11)
+    at handleAdminAnnouncementPublish (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:995:14)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6416:5)
+2026-08-09T07:25:48.666Z API request failed: UpstreamError: All GraphHopper API keys are rate limited or unavailable
+    at requestGraphHopperRoute (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4660:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fetchRoadPlannerResults (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4706:19)
+    at async C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5848:11
+    at async Promise.allSettled (index 0)
+    at async waitForRoutePlannerTasks (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5024:20)
+    at async buildRoutePlannerData (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5873:5)
+    at async C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5966:20
+    at async proxyRoutePlanner (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5951:5)
+    at async Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6484:5)
+2026-08-09T07:25:48.768Z API request failed: UpstreamError: 搭乘時間已經過去，請選擇目前時間之後
+    at parseJourneyDeparture (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2857:11)
+    at C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4548:25
+    at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+    at runWithTdxPriority (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:321:29)
+    at proxyJourneySearch (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4543:11)
+    at Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6476:11)
+    at Server.emit (node:events:509:28)
+    at parserOnIncoming (node:_http_server:1268:12)
+    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17)
+2026-08-09T07:25:48.772Z API request failed: UpstreamError: TDX 目前僅提供今天起 28 天內可查詢的班表
+    at parseJourneyDeparture (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2860:11)
+    at C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4548:25
+    at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+    at runWithTdxPriority (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:321:29)
+    at proxyJourneySearch (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4543:11)
+    at Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6476:11)
+    at Server.emit (node:events:509:28)
+    at parserOnIncoming (node:_http_server:1268:12)
+    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17)
+2026-08-09T07:25:49.511Z API request failed: UpstreamError: TDX queue is paused due to rate limits
+    at fetchTdxUrl (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:1303:11)
+    at fetchTdxCityRoute (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:1440:10)
+    at fetchBusRouteDetails (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2045:5)
+    at C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2070:28
+    at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+    at runWithTdxPriority (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:321:29)
+    at proxyBusDetails (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2060:11)
+    at Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6464:11)
+    at Server.emit (node:events:509:28)
+    at parserOnIncoming (node:_http_server:1268:12)
+2026-08-09T07:25:49.952Z API request failed: UpstreamError: Official service returned HTTP 503 Service Unavailable
+    at fetchJson (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:779:29)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async execute (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\tdxQueue.js:32:22)
+2026-08-09T07:25:50.386Z API request failed: UpstreamError: Official service returned HTTP 503 Service Unavailable
+    at fetchJson (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:779:29)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async execute (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\tdxQueue.js:32:22)
+2026-08-09T07:27:45.238Z API request failed: UpstreamError: 標題 僅能使用純文字
+    at announcementText (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:976:11)
+    at handleAdminAnnouncementPublish (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:995:14)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6416:5)
+2026-08-09T07:27:45.414Z API request failed: UpstreamError: All GraphHopper API keys are rate limited or unavailable
+    at requestGraphHopperRoute (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4660:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fetchRoadPlannerResults (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4706:19)
+    at async C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5848:11
+    at async Promise.allSettled (index 0)
+    at async waitForRoutePlannerTasks (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5024:20)
+    at async buildRoutePlannerData (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5873:5)
+    at async C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5966:20
+    at async proxyRoutePlanner (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:5951:5)
+    at async Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6484:5)
+2026-08-09T07:27:45.479Z API request failed: UpstreamError: 搭乘時間已經過去，請選擇目前時間之後
+    at parseJourneyDeparture (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2857:11)
+    at C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4548:25
+    at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+    at runWithTdxPriority (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:321:29)
+    at proxyJourneySearch (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4543:11)
+    at Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6476:11)
+    at Server.emit (node:events:509:28)
+    at parserOnIncoming (node:_http_server:1268:12)
+    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17)
+2026-08-09T07:27:45.499Z API request failed: UpstreamError: TDX 目前僅提供今天起 28 天內可查詢的班表
+    at parseJourneyDeparture (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2860:11)
+    at C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4548:25
+    at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+    at runWithTdxPriority (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:321:29)
+    at proxyJourneySearch (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:4543:11)
+    at Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6476:11)
+    at Server.emit (node:events:509:28)
+    at parserOnIncoming (node:_http_server:1268:12)
+    at HTTPParser.parserOnHeadersComplete (node:_http_common:125:17)
+2026-08-09T07:27:46.403Z API request failed: UpstreamError: TDX queue is paused due to rate limits
+    at fetchTdxUrl (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:1303:11)
+    at fetchTdxCityRoute (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:1440:10)
+    at fetchBusRouteDetails (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2045:5)
+    at C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2070:28
+    at AsyncLocalStorage.run (node:internal/async_local_storage/async_context_frame:63:14)
+    at runWithTdxPriority (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:321:29)
+    at proxyBusDetails (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:2060:11)
+    at Server.<anonymous> (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:6464:11)
+    at Server.emit (node:events:509:28)
+    at parserOnIncoming (node:_http_server:1268:12)
+2026-08-09T07:27:46.732Z API request failed: UpstreamError: Official service returned HTTP 503 Service Unavailable
+    at fetchJson (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:779:29)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async execute (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\tdxQueue.js:32:22)
+2026-08-09T07:27:47.180Z API request failed: UpstreamError: Official service returned HTTP 503 Service Unavailable
+    at fetchJson (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\server.js:779:29)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async execute (C:\Users\Administrator\Desktop\台灣智慧生活資訊門戶 App\tdxQueue.js:32:22)
