@@ -1359,6 +1359,7 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
       departureTime: plannedDepartureTime, modes: 'bus,tra,metro'
     });
     const etaCallsBeforeSouthPlanner = calls.busEtaFilters.length;
+    console.log('south planner eta before', etaCallsBeforeSouthPlanner, calls.busEtaFilters);
     const southPlannerResponse = await fetch(southPlannerUrl);
     const southPlanner = await southPlannerResponse.json();
     assert.equal(southPlannerResponse.status, 200);
@@ -1373,6 +1374,7 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     );
     assert.equal(walkRailBus.legs[0].mode, 'walk');
     assert.equal(walkRailBus.legs.at(-1).mode, 'walk');
+    console.log('south planner eta after', calls.busEtaFilters.length, calls.busEtaFilters);
     assert.equal(calls.busEtaFilters.length, etaCallsBeforeSouthPlanner);
 
     const southDirectUrl = new URL(southPlannerUrl);

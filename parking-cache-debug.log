@@ -1,0 +1,11 @@
+2026-08-09T04:32:21.122Z | fetchTdxUrl | /api/basic/v1/Parking/OffStreet/CarPark/City/Taipei | primary:http://127.0.0.1:57807/api/basic/v1/Parking/OffStreet/CarPark/City/Taipei?%24top=10000&%24format=JSON | cacheExists=false
+2026-08-09T04:32:21.123Z | refreshTdxCacheEntry | /api/basic/v1/Parking/OffStreet/CarPark/City/Taipei | pending=false | updatedAt=0 | refreshIntervalMs=3000
+2026-08-09T04:32:25.220Z | fetchTdxUrl | /api/basic/v1/Parking/OffStreet/ParkingAvailability/City/Taipei | primary:http://127.0.0.1:57807/api/basic/v1/Parking/OffStreet/ParkingAvailability/City/Taipei?%24top=10000&%24format=JSON | cacheExists=false
+2026-08-09T04:32:25.220Z | refreshTdxCacheEntry | /api/basic/v1/Parking/OffStreet/ParkingAvailability/City/Taipei | pending=false | updatedAt=0 | refreshIntervalMs=3000
+2026-08-09T04:32:25.997Z | refreshTdxCacheEntry | /api/basic/v1/Parking/OffStreet/ParkingAvailability/City/Taipei | pending=true | updatedAt=0 | refreshIntervalMs=3000
+2026-08-09T04:32:28.727Z | fetchTdxUrl | /api/basic/v1/Parking/OffStreet/CarPark/City/Taipei | primary:http://127.0.0.1:57807/api/basic/v1/Parking/OffStreet/CarPark/City/Taipei?%24top=10000&%24format=JSON | cacheExists=true
+2026-08-09T04:32:28.727Z | refreshTdxCacheEntry | /api/basic/v1/Parking/OffStreet/CarPark/City/Taipei | pending=false | updatedAt=1786249945219 | refreshIntervalMs=3000
+2026-08-09T04:32:30.996Z | refreshTdxCacheEntry | /api/basic/v1/Parking/OffStreet/CarPark/City/Taipei | pending=true | updatedAt=1786249945219 | refreshIntervalMs=3000
+2026-08-09T04:32:30.997Z | refreshTdxCacheEntry | /api/basic/v1/Parking/OffStreet/ParkingAvailability/City/Taipei | pending=false | updatedAt=1786249947622 | refreshIntervalMs=3000
+2026-08-09T04:32:31.220Z | fetchTdxUrl | /api/basic/v1/Parking/OffStreet/ParkingAvailability/City/Taipei | primary:http://127.0.0.1:57807/api/basic/v1/Parking/OffStreet/ParkingAvailability/City/Taipei?%24top=10000&%24format=JSON | cacheExists=true
+2026-08-09T04:32:31.220Z | refreshTdxCacheEntry | /api/basic/v1/Parking/OffStreet/ParkingAvailability/City/Taipei | pending=true | updatedAt=1786249947622 | refreshIntervalMs=3000

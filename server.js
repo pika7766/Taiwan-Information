@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
 
 const ROOT = __dirname;
 const ENV_FILE = path.join(ROOT, '.env');
@@ -170,6 +171,37 @@ const JOURNEY_FARE_INITIAL_WAIT_MS = Math.min(
   5_000,
   Math.max(250, Number(process.env.JOURNEY_FARE_INITIAL_WAIT_MS) || 1_500)
 );
+const ETA_TRACE_LOG_FILE = path.join(ROOT, 'test-eta-trace.log');
+
+function normalizeStopFilter(stopFilter) {
+  const raw = String(stopFilter || '');
+  const uidMatches = Array.from(raw.matchAll(/StopUID eq '([^']+)'/g)).map((m) => m[1]);
+  const uniqueSorted = Array.from(new Set(uidMatches)).sort();
+  const normalized = uniqueSorted.length
+    ? uniqueSorted.map((uid) => `StopUID eq '${String(uid).replaceAll("'", "''")}'`).join(' or ')
+    : raw;
+  return { raw, normalized, uids: uniqueSorted };
+}
+
+function appendEtaTrace(line) {
+  try {
+    fs.appendFileSync(ETA_TRACE_LOG_FILE, `${line}\n`, 'utf8');
+  } catch (error) {
+    /* ignore logging failures */
+  }
+}
+
+function etaTrace(event) {
+  const stack = new Error().stack || '';
+  const caller = stack.split('\n').slice(2, 6).map((line) => line.trim()).join(' | ');
+  const payload = {
+    timestamp: new Date().toISOString(),
+    caller,
+    ...event
+  };
+  appendEtaTrace(JSON.stringify(payload));
+}
+
 const OFFICIAL_REPORT_CATEGORIES = [
   { id: 'health', name: '生育保健', tid: 291 },
   { id: 'job', name: '求職就業', tid: 261 },
@@ -246,6 +278,7 @@ const geocodeSearchCache = new Map();
 const routePlannerCache = new Map();
 const routePlannerResultCache = new Map();
 const roadRoutingPayloadCache = new Map();
+const journeyBusEtaOverlayCache = new Map();
 const busJourneyDerivedCache = new WeakMap();
 const journeyStationDerivedCache = new WeakMap();
 const railJourneyDerivedCache = new WeakMap();
@@ -265,6 +298,23 @@ let journeyGraphRefreshTimer = null;
 const TDX_RESPONSE_CACHE_MS = TDX_DYNAMIC_REFRESH_INTERVAL_MS;
 let tdxRequestQueue = Promise.resolve();
 let lastTdxRequestAt = 0;
+const createTdxQueue = require('./tdxQueue');
+const tdxQueue = createTdxQueue({
+  maxConcurrency: Math.max(2, Math.min(3, Number(process.env.TDX_MAX_CONCURRENCY) || 3)),
+  spacingMs: Math.max(150, Math.min(200, Number(process.env.TDX_REQUEST_SPACING_MS) || 180))
+});
+const tdxPriorityStorage = new AsyncLocalStorage();
+
+function resolveTdxPriority(options = {}) {
+  if (options.priority) return options.priority;
+  const storePriority = tdxPriorityStorage.getStore();
+  if (storePriority) return storePriority;
+  return options.backgroundRefresh === false ? 'high' : 'low';
+}
+
+function runWithTdxPriority(priority, task) {
+  return tdxPriorityStorage.run(priority, task);
+}
 let tdxCacheRefreshPromise = null;
 let tdxCacheRefreshTimer = null;
 const adminSessions = new Map();
@@ -549,6 +599,7 @@ function adminStatusPayload() {
     graphHopperApiKeyCount: graphHopperApiKeys.length,
     graphHopperAvailableApiKeyCount: graphHopperApiKeys
       .filter((apiKey) => Date.now() >= apiKey.rateLimitedUntil).length,
+    queueStatus: tdxQueue.status(),
     fcmConfigured: Boolean(fcmProjectId && fcmServiceAccount?.client_email && fcmServiceAccount?.private_key),
     fcmProjectId,
     fcmTopic: FCM_TOPIC,
@@ -1150,14 +1201,14 @@ function tdxRefreshIntervalForUrl(url) {
   return dynamicPath ? TDX_DYNAMIC_REFRESH_INTERVAL_MS : TDX_STATIC_REFRESH_INTERVAL_MS;
 }
 
-function queueTdxRequest(task) {
-  const ready = tdxRequestQueue.then(async () => {
+function queueTdxRequest(task, options = {}) {
+  const priority = resolveTdxPriority(options);
+  return tdxQueue.enqueue(async () => {
     const waitMs = Math.max(0, TDX_REQUEST_SPACING_MS - (Date.now() - lastTdxRequestAt));
     if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
     lastTdxRequestAt = Date.now();
-  });
-  tdxRequestQueue = ready.catch(() => undefined);
-  return ready.then(task);
+    return task();
+  }, { priority, maxAttempts: options.maxAttempts });
 }
 
 function tdxCredentialPool(poolName = 'primary') {
@@ -1187,7 +1238,7 @@ function areAllTdxCredentialsRateLimited(poolName = 'primary') {
     && pool.every((credential) => Date.now() < credential.rateLimitedUntil);
 }
 
-async function requestTdxUrlFromPool(url, poolName) {
+async function requestTdxUrlFromPool(url, poolName, options = {}) {
   const pool = tdxCredentialPool(poolName);
   if (!pool.length) {
     throw new UpstreamError(`No TDX credential is configured for the ${poolName} pool`, 503);
@@ -1221,6 +1272,22 @@ async function requestTdxUrlFromPool(url, poolName) {
     }
 
     try {
+      if (/EstimatedTimeOfArrival/.test(String(url.pathname))) {
+        etaTrace({
+          source: 'requestTdxUrlFromPool',
+          url: url.toString(),
+          poolName,
+          priority: resolveTdxPriority(options),
+          event: 'outgoingRequest'
+        });
+      }
+      if (/Parking\/OffStreet\/CarPark\/City/.test(String(url.pathname))) {
+        console.error('DEBUG parkingCarPark outgoingRequest', url.toString(), poolName, resolveTdxPriority(options));
+      }
+      if (/Parking\/OffStreet\/ParkingAvailability\/City/.test(String(url.pathname))) {
+        console.error('DEBUG parkingAvailability outgoingRequest', url.toString(), poolName, resolveTdxPriority(options));
+      }
+
       const data = await queueTdxRequest(() => {
         if (!tdxFetchingEnabled) {
           throw new UpstreamError('管理員已關閉運輸資訊', 503);
@@ -1228,7 +1295,7 @@ async function requestTdxUrlFromPool(url, poolName) {
         return fetchJson(url, {
           headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
         }, 60_000);
-      });
+      }, { priority: resolveTdxPriority(options) });
       activeTdxCredentialIndexes[poolName] = index;
       return data;
     } catch (error) {
@@ -1257,14 +1324,14 @@ async function requestTdxUrlFromPool(url, poolName) {
   throw lastError || new UpstreamError('No TDX credential is currently available', 503);
 }
 
-async function requestTdxUrl(url) {
+async function requestTdxUrl(url, options = {}) {
   if (!tdxFetchingEnabled) {
     throw new UpstreamError('管理員已關閉運輸資訊', 503);
   }
 
   let primaryError;
   try {
-    return await requestTdxUrlFromPool(url, 'primary');
+    return await requestTdxUrlFromPool(url, 'primary', options);
   } catch (error) {
     primaryError = error;
   }
@@ -1279,7 +1346,7 @@ async function requestTdxUrl(url) {
 
   console.warn('TDX primary pool could not complete the request; trying the reserve pool.');
   try {
-    return await requestTdxUrlFromPool(url, 'reserve');
+    return await requestTdxUrlFromPool(url, 'reserve', options);
   } catch (reserveError) {
     if (!tdxFetchingEnabled) {
       throw new UpstreamError('管理員已關閉運輸資訊', 503);
@@ -1292,10 +1359,11 @@ async function requestTdxUrl(url) {
   }
 }
 
-async function refreshTdxCacheEntry(entry) {
+async function refreshTdxCacheEntry(entry, options = {}) {
   if (entry.pending) return entry.pending;
   entry.pending = (async () => {
-    const data = await requestTdxUrl(entry.url);
+    const priority = resolveTdxPriority({ ...options, backgroundRefresh: entry.backgroundRefresh });
+    const data = await requestTdxUrl(entry.url, { priority });
     entry.data = data;
     entry.updatedAt = Date.now();
     entry.expiresAt = entry.updatedAt + entry.refreshIntervalMs;
@@ -1318,7 +1386,7 @@ async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
       expiresAt: 0,
       lastAccessAt: 0,
       cacheMs,
-      refreshIntervalMs: options.refreshIntervalMs || tdxRefreshIntervalForUrl(url),
+      refreshIntervalMs: Math.max(options.refreshIntervalMs ?? cacheMs ?? tdxRefreshIntervalForUrl(url), 1000),
       backgroundRefresh: options.backgroundRefresh !== false
     };
     tdxResponseCache.set(key, entry);
@@ -1329,16 +1397,19 @@ async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
   }
   if (options.trackActivity !== false) entry.lastAccessAt = Date.now();
 
+  const priority = resolveTdxPriority({ ...options, backgroundRefresh: entry.backgroundRefresh });
   if (entry.data && options.forceRefresh !== true) {
-    if (Date.now() < entry.updatedAt + entry.refreshIntervalMs) return entry.data;
+    if (Date.now() < entry.updatedAt + entry.refreshIntervalMs) {
+      return entry.data;
+    }
     try {
-      return await refreshTdxCacheEntry(entry);
+      return await refreshTdxCacheEntry(entry, { priority });
     } catch (error) {
       return entry.data;
     }
   }
   try {
-    return await refreshTdxCacheEntry(entry);
+    return await refreshTdxCacheEntry(entry, { priority });
   } catch (error) {
     if (!entry.data) tdxResponseCache.delete(key);
     throw error;
@@ -1373,6 +1444,81 @@ function startTdxCacheRefresh() {
 }
 
 async function fetchTdxCity(pathname, city, parameters = {}, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
+  // Special-case EstimatedTimeOfArrival to populate/observe the journey overlay cache
+  if (pathname === 'v2/Bus/EstimatedTimeOfArrival/City') {
+    const normalized = normalizeStopFilter(parameters['$filter']);
+    const cacheKey = normalized.normalized;
+    const cached = journeyBusEtaOverlayCache.get(cacheKey);
+    etaTrace({
+      source: 'fetchTdxCity',
+      city,
+      pathname,
+      rawFilter: normalized.raw,
+      normalizedFilter: normalized.normalized,
+      cacheKey,
+      cacheState: cached ? {
+        hasData: Boolean(cached.data), hasPending: Boolean(cached.pending), expiresAt: cached.expiresAt
+      } : null,
+      requestedUids: normalized.uids,
+      event: 'lookup'
+    });
+    if (cached?.data && cached.expiresAt > Date.now()) {
+      etaTrace({ source: 'fetchTdxCity', cacheKey, event: 'exactHit' });
+      return cached.data;
+    }
+    if (cached?.data) {
+      etaTrace({ source: 'fetchTdxCity', cacheKey, event: 'staleReturn' });
+      if (!cached.pending) {
+        const url = tdxCityUrl(pathname, city, parameters);
+        const pending = fetchTdxUrl(url, cacheMs, {
+          ...options,
+          refreshIntervalMs: Math.max(JOURNEY_LIVE_REFRESH_INTERVAL_MS, 15_000),
+          backgroundRefresh: false
+        }).then((payload) => {
+          const entry = journeyBusEtaOverlayCache.get(cacheKey);
+          if (entry) {
+            entry.data = payload;
+            entry.expiresAt = Date.now() + JOURNEY_LIVE_REFRESH_INTERVAL_MS;
+          }
+          return payload;
+        }).finally(() => {
+          const entry = journeyBusEtaOverlayCache.get(cacheKey);
+          if (entry?.pending === pending) entry.pending = null;
+        });
+        cached.pending = pending;
+      }
+      return cached.data;
+    }
+    if (cached?.pending) {
+      etaTrace({ source: 'fetchTdxCity', cacheKey, event: 'pendingHit' });
+      return cached.pending;
+    }
+
+    etaTrace({ source: 'fetchTdxCity', cacheKey, event: 'miss' });
+    const url = tdxCityUrl(pathname, city, parameters);
+    const pending = fetchTdxUrl(url, cacheMs, {
+      ...options,
+      backgroundRefresh: false
+    }).then((payload) => {
+      const entry = journeyBusEtaOverlayCache.get(cacheKey);
+      if (entry) {
+        entry.data = payload;
+        entry.expiresAt = Date.now() + JOURNEY_LIVE_REFRESH_INTERVAL_MS;
+      }
+      return payload;
+    }).finally(() => {
+      const entry = journeyBusEtaOverlayCache.get(cacheKey);
+      if (entry?.pending === pending) entry.pending = null;
+    });
+
+    journeyBusEtaOverlayCache.set(cacheKey, {
+      data: null,
+      pending,
+      expiresAt: Date.now() + JOURNEY_LIVE_REFRESH_INTERVAL_MS
+    });
+    return pending;
+  }
+
   return fetchTdxUrl(tdxCityUrl(pathname, city, parameters), cacheMs, options);
 }
 
@@ -2002,21 +2148,23 @@ async function fetchBusRouteDetails(city, routeName, plateNumber = '', preferred
 
 async function proxyBusDetails(requestUrl, response) {
   try {
-    const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    const requestedCity = requestUrl.searchParams.get('city');
-    const city = requestedCity === 'InterCity' ? 'InterCity' : requireTdxCity(requestUrl.searchParams, lat, lng);
-    const routeName = String(requestUrl.searchParams.get('routeName') || '').trim();
-    const plateNumber = String(requestUrl.searchParams.get('plateNumber') || '').trim();
-    const rawDirection = requestUrl.searchParams.get('direction');
-    const directionValue = rawDirection === null || rawDirection === '' ? NaN : Number(rawDirection);
-    const currentStopUid = String(requestUrl.searchParams.get('currentStopUid') || '').trim();
-    if (!routeName) throw new UpstreamError('routeName is required', 400);
-    const routes = await fetchBusRouteDetails(city, routeName, plateNumber, Number.isFinite(directionValue) ? directionValue : null, currentStopUid);
-    sendJson(response, 200, {
-      success: true,
-      source: '交通部 TDX 公車站序與預估到站',
-      observedAt: new Date().toISOString(),
-      data: { city, routeName, plateNumber, routes }
+    await runWithTdxPriority('high', async () => {
+      const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
+      const requestedCity = requestUrl.searchParams.get('city');
+      const city = requestedCity === 'InterCity' ? 'InterCity' : requireTdxCity(requestUrl.searchParams, lat, lng);
+      const routeName = String(requestUrl.searchParams.get('routeName') || '').trim();
+      const plateNumber = String(requestUrl.searchParams.get('plateNumber') || '').trim();
+      const rawDirection = requestUrl.searchParams.get('direction');
+      const directionValue = rawDirection === null || rawDirection === '' ? NaN : Number(rawDirection);
+      const currentStopUid = String(requestUrl.searchParams.get('currentStopUid') || '').trim();
+      if (!routeName) throw new UpstreamError('routeName is required', 400);
+      const routes = await fetchBusRouteDetails(city, routeName, plateNumber, Number.isFinite(directionValue) ? directionValue : null, currentStopUid);
+      sendJson(response, 200, {
+        success: true,
+        source: '交通部 TDX 公車站序與預估到站',
+        observedAt: new Date().toISOString(),
+        data: { city, routeName, plateNumber, routes }
+      });
     });
   } catch (error) {
     sendApiError(response, error);
@@ -2121,7 +2269,8 @@ async function fetchNationwideBusSource(source) {
   const realtimeOptions = {
     forceRefresh: true,
     backgroundRefresh: false,
-    trackActivity: false
+    trackActivity: false,
+    priority: 'low'
   };
   if (!source.interCity) {
     return fetchTdxCity(
@@ -2426,17 +2575,18 @@ function parkingSpaceTotal(entries, field) {
 }
 
 async function fetchParkingCityData(city, origin, radiusMeters) {
-  const parkingLotsPayload = await fetchTdxCity('v1/Parking/OffStreet/CarPark/City', city, {
+  const parkingLotsPromise = fetchTdxCity('v1/Parking/OffStreet/CarPark/City', city, {
     '$top': 10000
   }, TDX_STATIC_REFRESH_INTERVAL_MS);
-  let availabilityPayload = [];
-  try {
-    availabilityPayload = await fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', city, {
-      '$top': 10000
-    }, TDX_DYNAMIC_REFRESH_INTERVAL_MS);
-  } catch (error) {
+  const availabilityPromise = fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', city, {
+    '$top': 10000
+  }, TDX_DYNAMIC_REFRESH_INTERVAL_MS).catch((error) => {
     console.error(`TDX ${city} parking availability unavailable; parking locations are retained:`, error.message);
-  }
+    return [];
+  });
+
+  const parkingLotsPayload = await parkingLotsPromise;
+  const availabilityPayload = await availabilityPromise;
 
   const parkingLots = asArray(parkingLotsPayload, ['ParkingLots', 'CarParks']);
   const availability = asArray(availabilityPayload, ['ParkingAvailabilities', 'Availabilities']);
@@ -2655,11 +2805,86 @@ function journeyTdxUrl(pathname, parameters = {}) {
   return url;
 }
 
-function fetchJourneyTdx(pathname, parameters = {}, live = false) {
+function fetchJourneyTdx(pathname, parameters = {}, live = false, options = {}) {
   const refreshIntervalMs = live
     ? JOURNEY_LIVE_REFRESH_INTERVAL_MS
     : JOURNEY_STATIC_REFRESH_INTERVAL_MS;
-  return fetchTdxUrl(journeyTdxUrl(pathname, parameters), refreshIntervalMs, { refreshIntervalMs });
+  // If this is an EstimatedTimeOfArrival journey path, populate/observe the overlay cache
+  if (/EstimatedTimeOfArrival/.test(pathname)) {
+    const normalized = normalizeStopFilter(parameters['$filter']);
+    const cacheKey = normalized.normalized;
+    const cached = journeyBusEtaOverlayCache.get(cacheKey);
+    etaTrace({
+      source: 'fetchJourneyTdx',
+      pathname,
+      rawFilter: normalized.raw,
+      normalizedFilter: normalized.normalized,
+      cacheKey,
+      cacheState: cached ? {
+        hasData: Boolean(cached.data), hasPending: Boolean(cached.pending), expiresAt: cached.expiresAt
+      } : null,
+      requestedUids: normalized.uids,
+      event: 'lookup'
+    });
+    if (cached?.data && cached.expiresAt > Date.now()) {
+      etaTrace({ source: 'fetchJourneyTdx', cacheKey, event: 'exactHit' });
+      return cached.data;
+    }
+    if (cached?.data) {
+      etaTrace({ source: 'fetchJourneyTdx', cacheKey, event: 'staleReturn' });
+      if (!cached.pending) {
+        const url = journeyTdxUrl(pathname, parameters);
+        const pending = fetchTdxUrl(url, refreshIntervalMs, {
+          ...options,
+          refreshIntervalMs: Math.max(JOURNEY_LIVE_REFRESH_INTERVAL_MS, 15_000),
+          backgroundRefresh: false
+        }).then((payload) => {
+          const entry = journeyBusEtaOverlayCache.get(cacheKey);
+          if (entry) {
+            entry.data = payload;
+            entry.expiresAt = Date.now() + JOURNEY_LIVE_REFRESH_INTERVAL_MS;
+          }
+          return payload;
+        }).finally(() => {
+          const entry = journeyBusEtaOverlayCache.get(cacheKey);
+          if (entry?.pending === pending) entry.pending = null;
+        });
+        cached.pending = pending;
+      }
+      return cached.data;
+    }
+    if (cached?.pending) {
+      etaTrace({ source: 'fetchJourneyTdx', cacheKey, event: 'pendingHit' });
+      return cached.pending;
+    }
+    etaTrace({ source: 'fetchJourneyTdx', cacheKey, event: 'miss' });
+
+    const url = journeyTdxUrl(pathname, parameters);
+    const pending = fetchTdxUrl(url, refreshIntervalMs, {
+      ...options,
+      refreshIntervalMs,
+      backgroundRefresh: false
+    }).then((payload) => {
+      const entry = journeyBusEtaOverlayCache.get(cacheKey);
+      if (entry) {
+        entry.data = payload;
+        entry.expiresAt = Date.now() + JOURNEY_LIVE_REFRESH_INTERVAL_MS;
+      }
+      return payload;
+    }).finally(() => {
+      const entry = journeyBusEtaOverlayCache.get(cacheKey);
+      if (entry?.pending === pending) entry.pending = null;
+    });
+
+    journeyBusEtaOverlayCache.set(cacheKey, {
+      data: null,
+      pending,
+      expiresAt: Date.now() + JOURNEY_LIVE_REFRESH_INTERVAL_MS
+    });
+    return pending;
+  }
+
+  return fetchTdxUrl(journeyTdxUrl(pathname, parameters), refreshIntervalMs, { ...options, refreshIntervalMs });
 }
 
 function releaseJourneyTdxResponse(pathname, parameters = {}, live = false) {
@@ -3681,6 +3906,102 @@ function findBusTransferPaths(
   });
 }
 
+async function fetchBusEtaOverlayPayload(stopFilter, scope) {
+  if (!stopFilter) return [];
+  const normalized = normalizeStopFilter(stopFilter);
+  const cacheKey = normalized.normalized;
+  const cached = journeyBusEtaOverlayCache.get(cacheKey);
+  etaTrace({
+    source: 'fetchBusEtaOverlayPayload',
+    city: scope?.tdxCity,
+    rawFilter: normalized.raw,
+    normalizedFilter: normalized.normalized,
+    cacheKey,
+    cacheState: cached ? {
+      hasData: Boolean(cached.data), hasPending: Boolean(cached.pending), expiresAt: cached.expiresAt
+    } : null,
+    requestedUids: normalized.uids,
+    event: 'lookup'
+  });
+  if (cached?.data && cached.expiresAt > Date.now()) {
+    etaTrace({ source: 'fetchBusEtaOverlayPayload', cacheKey, event: 'exactHit' });
+    return cached.data;
+  }
+
+  const requestedSet = new Set(normalized.uids);
+  for (const [existingKey, entry] of journeyBusEtaOverlayCache.entries()) {
+    if (!entry) continue;
+    const existingUids = Array.from(String(existingKey).matchAll(/StopUID eq '([^']+)'/g)).map((m) => m[1]);
+    if (!existingUids.length) continue;
+    const existingSet = new Set(existingUids);
+    let isSuperset = true;
+    for (const uid of requestedSet) if (!existingSet.has(uid)) { isSuperset = false; break; }
+    if (isSuperset && entry.expiresAt > Date.now()) {
+      etaTrace({
+        source: 'fetchBusEtaOverlayPayload',
+        cacheKey,
+        usedSupersetKey: existingKey,
+        existingUids,
+        event: 'supersetHit'
+      });
+      if (entry.data) return entry.data;
+      if (entry.pending) return entry.pending;
+    }
+  }
+
+  if (cached?.data) {
+    etaTrace({ source: 'fetchBusEtaOverlayPayload', cacheKey, event: 'staleReturn' });
+    if (!cached.pending) {
+      const pending = fetchJourneyTdx(busJourneyPath('EstimatedTimeOfArrival', scope.tdxCity), {
+        '$filter': stopFilter,
+        '$top': 1000
+      }, true, { refreshIntervalMs: Math.max(JOURNEY_LIVE_REFRESH_INTERVAL_MS, 15_000), backgroundRefresh: false })
+        .then((payload) => {
+          const entry = journeyBusEtaOverlayCache.get(cacheKey);
+          if (entry) {
+            entry.data = payload;
+            entry.expiresAt = Date.now() + JOURNEY_LIVE_REFRESH_INTERVAL_MS;
+          }
+          return payload;
+        }).finally(() => {
+          const entry = journeyBusEtaOverlayCache.get(cacheKey);
+          if (entry?.pending === pending) entry.pending = null;
+        });
+
+      cached.pending = pending;
+    }
+    return cached.data;
+  }
+
+  if (cached?.pending) {
+    etaTrace({ source: 'fetchBusEtaOverlayPayload', cacheKey, event: 'pendingHit' });
+    return cached.pending;
+  }
+
+  etaTrace({ source: 'fetchBusEtaOverlayPayload', cacheKey, event: 'miss' });
+  const pending = fetchJourneyTdx(busJourneyPath('EstimatedTimeOfArrival', scope.tdxCity), {
+    '$filter': stopFilter,
+    '$top': 1000
+  }, true, { refreshIntervalMs: Math.max(JOURNEY_LIVE_REFRESH_INTERVAL_MS, 15_000), backgroundRefresh: false }).then((payload) => {
+    const entry = journeyBusEtaOverlayCache.get(cacheKey);
+    if (entry) {
+      entry.data = payload;
+      entry.expiresAt = Date.now() + JOURNEY_LIVE_REFRESH_INTERVAL_MS;
+    }
+    return payload;
+  }).finally(() => {
+    const entry = journeyBusEtaOverlayCache.get(cacheKey);
+    if (entry?.pending === pending) entry.pending = null;
+  });
+
+  journeyBusEtaOverlayCache.set(cacheKey, {
+    data: null,
+    pending,
+    expiresAt: Date.now() + JOURNEY_LIVE_REFRESH_INTERVAL_MS
+  });
+  return pending;
+}
+
 async function searchBusJourneys(scope, originId, destinationId, departure, options = {}) {
   const network = await fetchBusJourneyNetwork(scope);
   const origin = requireJourneyStation(network.stations, originId, '起始站');
@@ -3693,10 +4014,7 @@ async function searchBusJourneys(scope, originId, destinationId, departure, opti
     .join(' or ');
   let etaUnavailable = false;
   const etaPayload = options.includeRealtime !== false && stopFilter
-    ? await fetchJourneyTdx(busJourneyPath('EstimatedTimeOfArrival', scope.tdxCity), {
-      '$filter': stopFilter,
-      '$top': 1000
-    }, true).catch((error) => {
+    ? await fetchBusEtaOverlayPayload(stopFilter, scope).catch((error) => {
       if (!tdxFetchingEnabled || error.message === '管理員已關閉運輸資訊') throw error;
       etaUnavailable = true;
       console.error(`Unable to apply ${scope.tdxCity} bus ETA overlay:`, error.message);
@@ -4351,29 +4669,31 @@ function startJourneyGraphRefresh() {
 
 async function proxyJourneyOptions(requestUrl, response) {
   try {
-    const mode = requireJourneyMode(requestUrl.searchParams);
-    let scope = {};
-    if (mode === 'bus') scope = requireJourneyCity(requestUrl.searchParams);
-    if (mode === 'metro') {
-      scope = requireJourneyCity(requestUrl.searchParams);
-      scope.system = requireMetroSystem(requestUrl.searchParams, scope.portalCityCode);
-    }
-    const stationData = await fetchJourneyStationData(mode, scope);
-    sendJson(response, 200, {
-      success: true,
-      source: '交通部 TDX 固定運輸資料',
-      observedAt: new Date().toISOString(),
-      refreshIntervalSeconds: JOURNEY_STATIC_REFRESH_INTERVAL_MS / 1000,
-      data: {
-        mode,
-        city: scope.portalCityCode || null,
-        system: scope.system || null,
-        systems: mode === 'metro'
-          ? (METRO_SYSTEMS_BY_CITY[scope.portalCityCode] || [])
-            .map((id) => ({ id, name: METRO_SYSTEM_LABELS[id] || id }))
-          : [],
-        stations: stationData.stations
+    await runWithTdxPriority('high', async () => {
+      const mode = requireJourneyMode(requestUrl.searchParams);
+      let scope = {};
+      if (mode === 'bus') scope = requireJourneyCity(requestUrl.searchParams);
+      if (mode === 'metro') {
+        scope = requireJourneyCity(requestUrl.searchParams);
+        scope.system = requireMetroSystem(requestUrl.searchParams, scope.portalCityCode);
       }
+      const stationData = await fetchJourneyStationData(mode, scope);
+      sendJson(response, 200, {
+        success: true,
+        source: '交通部 TDX 固定運輸資料',
+        observedAt: new Date().toISOString(),
+        refreshIntervalSeconds: JOURNEY_STATIC_REFRESH_INTERVAL_MS / 1000,
+        data: {
+          mode,
+          city: scope.portalCityCode || null,
+          system: scope.system || null,
+          systems: mode === 'metro'
+            ? (METRO_SYSTEMS_BY_CITY[scope.portalCityCode] || [])
+              .map((id) => ({ id, name: METRO_SYSTEM_LABELS[id] || id }))
+            : [],
+          stations: stationData.stations
+        }
+      });
     });
   } catch (error) {
     sendApiError(response, error);
@@ -4382,29 +4702,31 @@ async function proxyJourneyOptions(requestUrl, response) {
 
 async function proxyJourneySearch(requestUrl, response) {
   try {
-    const mode = requireJourneyMode(requestUrl.searchParams);
-    const originId = String(requestUrl.searchParams.get('originId') || '').trim();
-    const destinationId = String(requestUrl.searchParams.get('destinationId') || '').trim();
-    if (!originId || !destinationId) throw new UpstreamError('請選擇起始站與終點站', 400);
-    const departure = parseJourneyDeparture(requestUrl.searchParams.get('departureTime'));
-    let data;
-    if (mode === 'bus') {
-      data = await searchBusJourneys(requireJourneyCity(requestUrl.searchParams), originId, destinationId, departure);
-    } else if (mode === 'metro') {
-      const scope = requireJourneyCity(requestUrl.searchParams);
-      scope.system = requireMetroSystem(requestUrl.searchParams, scope.portalCityCode);
-      data = await searchMetroJourneys(scope, originId, destinationId, departure);
-    } else {
-      data = await searchRailJourneys(mode, originId, destinationId, departure);
-    }
-    sendJson(response, 200, {
-      success: true,
-      source: '交通部 TDX 班次、票價與伺服器共用快取',
-      observedAt: new Date().toISOString(),
-      refreshIntervalSeconds: (mode === 'thsr'
-        ? JOURNEY_STATIC_REFRESH_INTERVAL_MS
-        : JOURNEY_LIVE_REFRESH_INTERVAL_MS) / 1000,
-      data: { mode, departureTime: `${departure.date}T${departure.time}:00+08:00`, ...data }
+    await runWithTdxPriority('high', async () => {
+      const mode = requireJourneyMode(requestUrl.searchParams);
+      const originId = String(requestUrl.searchParams.get('originId') || '').trim();
+      const destinationId = String(requestUrl.searchParams.get('destinationId') || '').trim();
+      if (!originId || !destinationId) throw new UpstreamError('請選擇起始站與終點站', 400);
+      const departure = parseJourneyDeparture(requestUrl.searchParams.get('departureTime'));
+      let data;
+      if (mode === 'bus') {
+        data = await searchBusJourneys(requireJourneyCity(requestUrl.searchParams), originId, destinationId, departure);
+      } else if (mode === 'metro') {
+        const scope = requireJourneyCity(requestUrl.searchParams);
+        scope.system = requireMetroSystem(requestUrl.searchParams, scope.portalCityCode);
+        data = await searchMetroJourneys(scope, originId, destinationId, departure);
+      } else {
+        data = await searchRailJourneys(mode, originId, destinationId, departure);
+      }
+      sendJson(response, 200, {
+        success: true,
+        source: '交通部 TDX 班次、票價與伺服器共用快取',
+        observedAt: new Date().toISOString(),
+        refreshIntervalSeconds: (mode === 'thsr'
+          ? JOURNEY_STATIC_REFRESH_INTERVAL_MS
+          : JOURNEY_LIVE_REFRESH_INTERVAL_MS) / 1000,
+        data: { mode, departureTime: `${departure.date}T${departure.time}:00+08:00`, ...data }
+      });
     });
   } catch (error) {
     sendApiError(response, error);
@@ -5776,26 +6098,28 @@ function fetchRoutePlannerData(origin, destination, departure, modes, strategy =
 
 async function proxyRoutePlanner(requestUrl, response) {
   try {
-    const origin = requirePlannerPoint(requestUrl.searchParams, 'origin');
-    const destination = requirePlannerPoint(requestUrl.searchParams, 'destination');
-    if (haversineMeters(origin.lat, origin.lng, destination.lat, destination.lng) < 50) {
-      throw new UpstreamError('起點與終點距離太近，請選擇不同地點', 400);
-    }
-    const requestedModes = String(requestUrl.searchParams.get('modes') || 'car,bus,tra,metro,thsr')
-      .split(',').map((mode) => mode.trim().toLowerCase()).filter((mode) => ROUTE_PLANNER_MODE_LABELS[mode]);
-    const modes = [...new Set(requestedModes)];
-    if (!modes.length) throw new UpstreamError('請至少選擇一種交通方式', 400);
-    const departure = parseJourneyDeparture(requestUrl.searchParams.get('departureTime'));
-    const requestedStrategy = String(requestUrl.searchParams.get('strategy') || 'all').toLowerCase();
-    const strategy = ['direct', 'prepare', 'multimodal'].includes(requestedStrategy)
-      ? requestedStrategy
-      : 'all';
-    const data = await fetchRoutePlannerData(origin, destination, departure, modes, strategy);
-    sendJson(response, 200, {
-      success: true,
-      source: 'GraphHopper 道路路由、交通部 TDX 與伺服器轉乘規劃',
-      observedAt: new Date().toISOString(),
-      data
+    await runWithTdxPriority('high', async () => {
+      const origin = requirePlannerPoint(requestUrl.searchParams, 'origin');
+      const destination = requirePlannerPoint(requestUrl.searchParams, 'destination');
+      if (haversineMeters(origin.lat, origin.lng, destination.lat, destination.lng) < 50) {
+        throw new UpstreamError('起點與終點距離太近，請選擇不同地點', 400);
+      }
+      const requestedModes = String(requestUrl.searchParams.get('modes') || 'car,bus,tra,metro,thsr')
+        .split(',').map((mode) => mode.trim().toLowerCase()).filter((mode) => ROUTE_PLANNER_MODE_LABELS[mode]);
+      const modes = [...new Set(requestedModes)];
+      if (!modes.length) throw new UpstreamError('請至少選擇一種交通方式', 400);
+      const departure = parseJourneyDeparture(requestUrl.searchParams.get('departureTime'));
+      const requestedStrategy = String(requestUrl.searchParams.get('strategy') || 'all').toLowerCase();
+      const strategy = ['direct', 'prepare', 'multimodal'].includes(requestedStrategy)
+        ? requestedStrategy
+        : 'all';
+      const data = await fetchRoutePlannerData(origin, destination, departure, modes, strategy);
+      sendJson(response, 200, {
+        success: true,
+        source: 'GraphHopper 道路路由、交通部 TDX 與伺服器轉乘規劃',
+        observedAt: new Date().toISOString(),
+        data
+      });
     });
   } catch (error) {
     sendApiError(response, error);
@@ -6000,17 +6324,19 @@ async function liveMetroJourney(searchParams) {
 
 async function proxyJourneyLive(requestUrl, response) {
   try {
-    const mode = requireJourneyMode(requestUrl.searchParams);
-    let data;
-    if (mode === 'bus') data = await liveBusJourney(requestUrl.searchParams);
-    else if (mode === 'metro') data = await liveMetroJourney(requestUrl.searchParams);
-    else data = await liveRailJourney(mode, requestUrl.searchParams);
-    sendJson(response, 200, {
-      success: true,
-      source: '交通部 TDX 即時動態與伺服器追蹤快取',
-      observedAt: data.observedAt || new Date().toISOString(),
-      refreshIntervalSeconds: JOURNEY_LIVE_REFRESH_INTERVAL_MS / 1000,
-      data
+    await runWithTdxPriority('high', async () => {
+      const mode = requireJourneyMode(requestUrl.searchParams);
+      let data;
+      if (mode === 'bus') data = await liveBusJourney(requestUrl.searchParams);
+      else if (mode === 'metro') data = await liveMetroJourney(requestUrl.searchParams);
+      else data = await liveRailJourney(mode, requestUrl.searchParams);
+      sendJson(response, 200, {
+        success: true,
+        source: '交通部 TDX 即時動態與伺服器追蹤快取',
+        observedAt: data.observedAt || new Date().toISOString(),
+        refreshIntervalSeconds: JOURNEY_LIVE_REFRESH_INTERVAL_MS / 1000,
+        data
+      });
     });
   } catch (error) {
     sendApiError(response, error);
