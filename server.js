@@ -229,6 +229,8 @@ const tdxCredentialPools = {
   reserve: tdxCredentials.filter((credential) => credential.pool === 'reserve')
 };
 const activeTdxCredentialIndexes = { primary: 0, reserve: 0 };
+let lastCredentialSwitchAt = 0;
+let backgroundPoolPausedUntil = 0; // when set, background tasks should pause using primary pool
 const graphHopperApiKeys = loadGraphHopperApiKeys();
 let activeGraphHopperApiKeyIndex = 0;
 let bikeStationDiskCache = [];
@@ -513,6 +515,11 @@ function sendApiError(response, error) {
   const status = error instanceof UpstreamError ? error.status : 500;
   const message = status === 429 ? '請求過多，請稍後再試' : error.message;
   console.error('API request failed:', error);
+  try {
+    fs.appendFileSync(path.join(ROOT, 'server-error.log'), `${new Date().toISOString()} API request failed: ${error.stack || error.message}\n`);
+  } catch (e) {
+    // ignore
+  }
   sendJson(response, status, {
     success: false,
     message,
@@ -1127,7 +1134,8 @@ function loadGraphHopperApiKeys() {
 }
 
 async function getTdxToken(credential) {
-  if (credential.token && Date.now() < credential.expiresAt - 60_000) return credential.token;
+  // Preserve token if it has more than 5 minutes remaining to avoid unnecessary token churn
+  if (credential.token && Date.now() < credential.expiresAt - 300_000) return credential.token;
   if (credential.tokenPromise) return credential.tokenPromise;
   credential.tokenPromise = (async () => {
     const body = new URLSearchParams({
@@ -1224,11 +1232,13 @@ function availableTdxCredentialCount(poolName = 'primary') {
 }
 
 function markTdxCredentialRateLimited(credential, error, poolName, poolIndex, pool) {
-  const cooldownMs = error.retryAfterMs || TDX_RATE_LIMIT_COOLDOWN_MS;
-  credential.rateLimitedUntil = Date.now() + Math.max(TDX_REFRESH_INTERVAL_MS, cooldownMs);
+  // When a credential hits rate limit or auth failure, put it into a 3 minute cooldown
+  const cooldownMs = Math.max(180_000, error?.retryAfterMs || 180_000);
+  credential.rateLimitedUntil = Date.now() + cooldownMs;
   credential.token = '';
   credential.expiresAt = 0;
   activeTdxCredentialIndexes[poolName] = (poolIndex + 1) % pool.length;
+  lastCredentialSwitchAt = Date.now();
   console.warn(`TDX ${credential.label} in ${poolName} pool reached HTTP 429; switching within that pool.`);
 }
 
@@ -1236,6 +1246,17 @@ function areAllTdxCredentialsRateLimited(poolName = 'primary') {
   const pool = tdxCredentialPool(poolName);
   return pool.length > 0
     && pool.every((credential) => Date.now() < credential.rateLimitedUntil);
+}
+
+function pauseBackgroundPoolIfNecessary() {
+  const now = Date.now();
+  const primaryPool = tdxCredentialPools.primary;
+  if (!primaryPool.length) return;
+  if (primaryPool.every((c) => now < c.rateLimitedUntil)) {
+    // Pause background usage for 3 minutes
+    backgroundPoolPausedUntil = now + 180_000;
+    console.warn('All primary credentials are rate-limited; pausing background TDX jobs for 3 minutes.');
+  }
 }
 
 async function requestTdxUrlFromPool(url, poolName, options = {}) {
@@ -1250,6 +1271,10 @@ async function requestTdxUrlFromPool(url, poolName, options = {}) {
     const index = (startingCredentialIndex + offset) % pool.length;
     const credential = pool[index];
     if (Date.now() < credential.rateLimitedUntil) continue;
+    // Avoid rapid switching through many credentials in under 1s
+    if (Date.now() - lastCredentialSwitchAt < 1000 && offset > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
 
     let token;
     try {
@@ -1258,10 +1283,14 @@ async function requestTdxUrlFromPool(url, poolName, options = {}) {
       lastError = error;
       if (error.status === 429) {
         markTdxCredentialRateLimited(credential, error, poolName, index, pool);
+        if (poolName === 'primary') pauseBackgroundPoolIfNecessary();
         continue;
       }
       if ([400, 401, 403].includes(error.status)) {
-        console.error(`TDX ${credential.label} authentication failed; trying the next credential.`);
+        // Treat authentication failures as a temporary outage for this credential
+        markTdxCredentialRateLimited(credential, error, poolName, index, pool);
+        if (poolName === 'primary') pauseBackgroundPoolIfNecessary();
+        console.error(`TDX ${credential.label} authentication failed; marking cooled and trying the next credential.`);
         continue;
       }
       if (!error.status || [502, 503, 504].includes(error.status)) {
@@ -1325,37 +1354,45 @@ async function requestTdxUrlFromPool(url, poolName, options = {}) {
 }
 
 async function requestTdxUrl(url, options = {}) {
-  if (!tdxFetchingEnabled) {
-    throw new UpstreamError('管理員已關閉運輸資訊', 503);
+  if (!tdxFetchingEnabled) throw new UpstreamError('管理員已關閉運輸資訊', 503);
+  const priority = resolveTdxPriority(options);
+
+  // Background requests must not use the reserve (credential 8). If primary pool
+  // is entirely rate-limited, pause background pool for 3 minutes and fail fast.
+  if (priority === 'low') {
+    const now = Date.now();
+    if (now < backgroundPoolPausedUntil) throw new UpstreamError('Background TDX pool paused due to rate limits', 503);
+    if (areAllTdxCredentialsRateLimited('primary')) {
+      pauseBackgroundPoolIfNecessary();
+      throw new UpstreamError('Background TDX pool paused due to rate limits', 503);
+    }
+    return await requestTdxUrlFromPool(url, 'primary', options);
   }
 
-  let primaryError;
+  // High priority: prefer reserve (credential 8) first, fallback to primary only on retryable errors
+  let reserveError = null;
+  if (tdxCredentialPools.reserve.length) {
+    try {
+      return await requestTdxUrlFromPool(url, 'reserve', options);
+    } catch (error) {
+      reserveError = error;
+      if (!(error?.status && [429, 502, 503, 504].includes(error.status))) {
+        throw error;
+      }
+      // otherwise fallthrough to try primary
+    }
+  }
+
+  // Try primary pool
   try {
     return await requestTdxUrlFromPool(url, 'primary', options);
-  } catch (error) {
-    primaryError = error;
-  }
-
-  if (!tdxFetchingEnabled) {
-    throw new UpstreamError('管理員已關閉運輸資訊', 503);
-  }
-  if (primaryError?.status && ![429, 502, 503, 504].includes(primaryError.status)) {
-    throw primaryError;
-  }
-  if (!tdxCredentialPools.reserve.length) throw primaryError;
-
-  console.warn('TDX primary pool could not complete the request; trying the reserve pool.');
-  try {
-    return await requestTdxUrlFromPool(url, 'reserve', options);
-  } catch (reserveError) {
-    if (!tdxFetchingEnabled) {
-      throw new UpstreamError('管理員已關閉運輸資訊', 503);
-    }
-    const primaryPoolIsEmpty = tdxCredentialPools.primary.length === 0;
-    if ((primaryError?.status === 429 || primaryPoolIsEmpty) && reserveError?.status === 429) {
+  } catch (primaryError) {
+    if (!tdxCredentialPools.reserve.length) throw primaryError;
+    // If reserve previously errored with 429 and primary also 429, surface a combined error
+    if (reserveError?.status === 429 && primaryError?.status === 429) {
       throw new UpstreamError('All eligible TDX credentials are rate limited', 429);
     }
-    throw reserveError?.status === 429 ? primaryError : reserveError;
+    throw primaryError;
   }
 }
 
@@ -6000,6 +6037,10 @@ async function buildRoutePlannerData(origin, destination, departure, modes, stra
   const settled = Array(modes.length);
   const includesDirectResults = strategy !== 'multimodal';
   const includesMultimodalResults = strategy === 'all' || strategy === 'multimodal';
+  const multimodalModes = [...modes];
+  let multimodalResults = [];
+  const preparationTask = Promise.resolve();
+  const preparationWarnings = [];
   const modeTasks = includesDirectResults ? modes.map(async (mode, index) => {
     try {
       const results = ROUTE_PLANNER_GRAPHHOPPER_MODES.has(mode)
@@ -6008,18 +6049,11 @@ async function buildRoutePlannerData(origin, destination, departure, modes, stra
           context, mode, origin, destination, departure, { planningContext: context }
         );
       settled[index] = { status: 'fulfilled', value: { mode, results } };
-    } catch (reason) {
-      settled[index] = { status: 'rejected', reason };
+    } catch (error) {
+      settled[index] = { status: 'rejected', reason: error };
+      return;
     }
   }) : [];
-  let preparationWarnings = [];
-  const preparationTask = strategy === 'prepare'
-    ? prepareRoutePlannerNetworks(modes, origin, destination, departure).then((warnings) => {
-        preparationWarnings = warnings;
-      })
-    : Promise.resolve();
-  let multimodalResults = [];
-  const multimodalModes = modes.filter((mode) => mode !== 'car');
   const multimodalTask = includesMultimodalResults
     ? fetchMultimodalPlannerResults(
         multimodalModes, origin, destination, departure, context
@@ -6039,10 +6073,25 @@ async function buildRoutePlannerData(origin, destination, departure, modes, stra
   }
   const completedModes = settled.slice();
   const completedMultimodalResults = multimodalResults.slice();
+  try {
+    const debugEntry = {
+      time: new Date().toISOString(),
+      modes,
+      multimodalCount: completedMultimodalResults.length,
+      multimodalSequences: completedMultimodalResults.map((r) => r.modeSequence || [r.mode])
+    };
+    fs.appendFileSync(path.join(ROOT, 'route-planner-debug.log'), `${JSON.stringify(debugEntry)}\n`);
+  } catch (e) {
+    // ignore
+  }
   const results = [
     ...completedMultimodalResults,
     ...completedModes.flatMap((result) => result?.status === 'fulfilled' ? result.value.results : [])
   ];
+  try {
+    const resultSummary = results.map((r) => ({ mode: r.mode, modeSequence: r.modeSequence || [r.mode], legs: Array.isArray(r.legs) ? r.legs.map((l) => l.mode) : [] }));
+    fs.appendFileSync(path.join(ROOT, 'route-planner-debug.log'), `RESULTS ${JSON.stringify({time: new Date().toISOString(), summary: resultSummary})}\n`);
+  } catch (e) {}
   const warnings = completedModes.flatMap((result, index) => result?.status === 'rejected'
     ? [`${ROUTE_PLANNER_MODE_LABELS[modes[index]]}：${result.reason?.message || '規劃失敗'}`]
     : []);
@@ -6114,6 +6163,23 @@ async function proxyRoutePlanner(requestUrl, response) {
         ? requestedStrategy
         : 'all';
       const data = await fetchRoutePlannerData(origin, destination, departure, modes, strategy);
+      // Normalize multimodal results: exclude multimodal sequences that include 'car'
+      try {
+        const beforeCount = data.results.length;
+        data.results = data.results.filter((result) => {
+          if (result.mode !== 'multimodal') return true;
+          if (Array.isArray(result.modeSequence) && result.modeSequence.includes('car')) return false;
+          return true;
+        });
+        const afterCount = data.results.length;
+        fs.appendFileSync(path.join(ROOT, 'route-planner-debug.log'), `FILTERED ${new Date().toISOString()} before=${beforeCount} after=${afterCount}\n`);
+      } catch (e) {}
+      try {
+        const requestedModes = String(requestUrl.searchParams.get('modes') || '').toLowerCase();
+        if (requestedModes.includes('car') && requestedModes.includes('scooter')) {
+          fs.appendFileSync(path.join(ROOT, 'route-planner-debug.log'), `RESPONSE ${new Date().toISOString()} ${JSON.stringify({origin: origin.name, destination: destination.name, modes: requestedModes, results: data.results.map((r)=> ({mode: r.mode, modeSequence: r.modeSequence || [r.mode]}))})}\n`);
+        }
+      } catch (e) {}
       sendJson(response, 200, {
         success: true,
         source: 'GraphHopper 道路路由、交通部 TDX 與伺服器轉乘規劃',
