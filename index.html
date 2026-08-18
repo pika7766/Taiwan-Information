@@ -1719,10 +1719,47 @@
       button.setAttribute('aria-busy', 'false');
     }
 
+    function handleTrafficLayerDisabled(showAlert = false) {
+      const layer = state.transportLayers?.traffic;
+      const button = state.transportLayerButtons?.traffic;
+      if (state.map && layer) {
+        if (state.map.hasLayer(layer)) state.map.removeLayer(layer);
+        layer.clearLayers();
+      }
+      if (button) {
+        button.dataset.loading = 'false';
+        button.setAttribute('aria-busy', 'false');
+        button.setAttribute('aria-pressed', 'false');
+        button.setAttribute('aria-label', `${button.dataset.label}，目前隱藏，點擊切換`);
+      }
+      state.lastTrafficPayload = null;
+      state.lastTrafficRoads = [];
+      state.lastTransportFetch.traffic = null;
+      if (showAlert && typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert('即時路況功能暫不開放，造成不便敬請見諒。');
+      }
+      return false;
+    }
+
     function setTransportLayerVisibility(layerKey, visible) {
       const layer = state.transportLayers?.[layerKey];
       const button = state.transportLayerButtons?.[layerKey];
       if (!state.map || !layer || !button) return;
+      if (layerKey === 'traffic') {
+        if (visible) {
+          return handleTrafficLayerDisabled(true);
+        }
+        if (state.map.hasLayer(layer)) state.map.removeLayer(layer);
+        layer.clearLayers();
+        button.dataset.loading = 'false';
+        button.setAttribute('aria-busy', 'false');
+        button.setAttribute('aria-pressed', 'false');
+        button.setAttribute('aria-label', `${button.dataset.label}，目前隱藏，點擊切換`);
+        state.lastTrafficPayload = null;
+        state.lastTrafficRoads = [];
+        state.lastTransportFetch.traffic = null;
+        return false;
+      }
       if (state.transportDataSuspended) return;
       if (!visible) {
         state.map.removeLayer(layer);
@@ -1816,8 +1853,12 @@
           button.innerHTML = `${definition.icon}<span>${definition.label}</span><span class="transport-layer-state" aria-live="polite"></span>`;
           L.DomEvent.on(button, 'click', (event) => {
             L.DomEvent.stop(event);
+            if (definition.key === 'traffic') {
+              handleTrafficLayerDisabled(true);
+              return;
+            }
             if (definition.disabled) {
-              alert('此功能暫不開放，造成不便敬請見諒。');
+              window.alert('此功能暫不開放，造成不便敬請見諒。');
               return;
             }
             const visible = state.map.hasLayer(state.transportLayers[definition.key]);

@@ -692,10 +692,10 @@
             <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-transport-layers.png" alt="地圖左上角四個交通圖層按鈕與 YouBike 數量群組">
             <h3 class="mt-4 text-base font-bold text-slate-950">2. 交通圖層與數量群組</h3>
             <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
-              <li>先按左上角「圖層」展開清單，再分別開關「即時路況」、「公車動態」、「YouBike 站點」與「停車場」；按鈕會顯示目前是讀取中、顯示或隱藏。</li>
+              <li>先按左上角「圖層」展開清單，再分別開關「公車動態」、「YouBike 站點」與「停車場」；按鈕會顯示目前是讀取中、顯示或隱藏。「即時路況」功能目前暫不開放。</li>
               <li>YouBike 與停車場標記較多，縮小地圖時圓圈會顯示區域內站點／停車場數量，放大後會拆成個別標記。</li>
               <li>YouBike 與停車場不能同時開啟；切換其中一個時，另一個會自動關閉，避免標記互相遮擋。</li>
-              <li>公車動態由伺服器每 12 秒更新；路況、YouBike、停車場與固定資料每 5 分鐘更新。所有資料都讀取伺服器共用快取。</li>
+              <li>公車動態由伺服器每 12 秒更新；YouBike、停車場與固定資料每 5 分鐘更新。所有資料都讀取伺服器共用快取。</li>
             </ul>
           </section>
 
@@ -703,7 +703,7 @@
             <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-road-parking.png" alt="道路壅塞色彩、停車場標記與剩餘車位資訊">
             <h3 class="mt-4 text-base font-bold text-slate-950">3. 即時路況與停車場</h3>
             <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
-              <li>開啟路況後，道路依綠色順暢、黃色緩慢、紅色壅塞、深紅色封閉顯示；點選道路可查看路段、平均速度與更新時間。</li>
+              <li>即時路況功能目前暫不開放，敬請見諒。</li>
               <li>開啟停車場後，點選「P」標記可查看剩餘車位、總車位、營運狀態、地址、電話、服務時間與費率；未提供即時車位時會明確標示。</li>
             </ul>
           </section>
@@ -1719,10 +1719,47 @@
       button.setAttribute('aria-busy', 'false');
     }
 
+    function handleTrafficLayerDisabled(showAlert = false) {
+      const layer = state.transportLayers?.traffic;
+      const button = state.transportLayerButtons?.traffic;
+      if (state.map && layer) {
+        if (state.map.hasLayer(layer)) state.map.removeLayer(layer);
+        layer.clearLayers();
+      }
+      if (button) {
+        button.dataset.loading = 'false';
+        button.setAttribute('aria-busy', 'false');
+        button.setAttribute('aria-pressed', 'false');
+        button.setAttribute('aria-label', `${button.dataset.label}，目前隱藏，點擊切換`);
+      }
+      state.lastTrafficPayload = null;
+      state.lastTrafficRoads = [];
+      state.lastTransportFetch.traffic = null;
+      if (showAlert && typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert('即時路況功能暫不開放，造成不便敬請見諒。');
+      }
+      return false;
+    }
+
     function setTransportLayerVisibility(layerKey, visible) {
       const layer = state.transportLayers?.[layerKey];
       const button = state.transportLayerButtons?.[layerKey];
       if (!state.map || !layer || !button) return;
+      if (layerKey === 'traffic') {
+        if (visible) {
+          return handleTrafficLayerDisabled(true);
+        }
+        if (state.map.hasLayer(layer)) state.map.removeLayer(layer);
+        layer.clearLayers();
+        button.dataset.loading = 'false';
+        button.setAttribute('aria-busy', 'false');
+        button.setAttribute('aria-pressed', 'false');
+        button.setAttribute('aria-label', `${button.dataset.label}，目前隱藏，點擊切換`);
+        state.lastTrafficPayload = null;
+        state.lastTrafficRoads = [];
+        state.lastTransportFetch.traffic = null;
+        return false;
+      }
       if (state.transportDataSuspended) return;
       if (!visible) {
         state.map.removeLayer(layer);
@@ -1777,7 +1814,7 @@
     function createTransportLayerControl() {
       const definitions = [
         {
-          key: 'traffic', label: '即時路況',
+          key: 'traffic', label: '即時路況', disabled: true,
           icon: '<span class="traffic-key" style="background:#16a34a"></span><span class="traffic-key" style="background:#eab308"></span><span class="traffic-key" style="background:#dc2626"></span>'
         },
         { key: 'bus', label: '公車動態', icon: '<span aria-hidden="true">🚌</span>' },
@@ -1816,6 +1853,14 @@
           button.innerHTML = `${definition.icon}<span>${definition.label}</span><span class="transport-layer-state" aria-live="polite"></span>`;
           L.DomEvent.on(button, 'click', (event) => {
             L.DomEvent.stop(event);
+            if (definition.key === 'traffic') {
+              handleTrafficLayerDisabled(true);
+              return;
+            }
+            if (definition.disabled) {
+              window.alert('此功能暫不開放，造成不便敬請見諒。');
+              return;
+            }
             const visible = state.map.hasLayer(state.transportLayers[definition.key]);
             setTransportLayerVisibility(definition.key, !visible);
           });
@@ -2521,35 +2566,8 @@
       const layer = state.transportLayers?.traffic;
       if (!layer) return;
       layer.clearLayers();
-      (roadPayload.data?.roads || []).forEach((road) => {
-        const popup = `<div class="transport-popup"><strong>${escapeHtml(road.roadName)}</strong>
-          <p>未取得即時交通資料，依預設交通順暢顯示</p>
-          <p>道路分類：${escapeHtml(road.highway || '未提供')}</p></div>`;
-        L.polyline(road.line, {
-          color: '#16a34a', weight: 5, opacity: 0.72,
-          renderer: state.trafficRenderer, bubblingMouseEvents: false
-        }).bindPopup(popup).addTo(layer);
-      });
-      const colors = { smooth: '#16a34a', slow: '#eab308', congested: '#dc2626', closed: '#991b1b', unknown: '#16a34a' };
-      state.lastTrafficRoads = trafficPayload.data?.roads || [];
-      (trafficPayload.data?.roads || []).forEach((road) => {
-        const color = colors[road.status] || colors.unknown;
-        const statusLabel = road.status === 'unknown'
-          ? '交通順暢（未取得即時資料，預設顯示）'
-          : road.statusLabel;
-        const popup = `<div class="transport-popup"><strong>${escapeHtml(road.roadName)}</strong>
-          <p>${escapeHtml(road.sectionName || '')}</p>
-          <p>目前狀況：${escapeHtml(statusLabel)}</p>
-          <p>平均速度：${Number.isFinite(road.speed) ? `${road.speed} km/h` : '未提供即時速度'}</p>
-          <p>更新時間：${escapeHtml(formatOfficialTime(road.updateTime))}</p></div>`;
-        (road.lines || []).forEach((line) => {
-          if (!Array.isArray(line) || line.length < 2) return;
-          L.polyline(line, {
-            color, weight: 7, opacity: road.status === 'unknown' ? 0.72 : 0.86,
-            renderer: state.trafficRenderer, bubblingMouseEvents: false
-          }).bindPopup(popup).addTo(layer);
-        });
-      });
+      // 即時路況功能已停用，不渲染任何道路資料
+      state.lastTrafficRoads = [];
     }
 
     async function refreshTransportLayers(lat, lng, cityCode, options = {}) {
@@ -2570,11 +2588,8 @@
       const parkingRecord = state.lastTransportFetch.parking;
       const shouldLoadBus = isActive('bus');
       const shouldLoadBusStops = shouldLoadBus && state.loadedBusStopCityCode !== cityCode;
-      const shouldLoadRoads = isActive('traffic') && (force || cityChanged || !state.lastRoadPayload
-        || distanceFrom(roadRecord) >= 1500 || roadRecord?.zoom !== state.map.getZoom()
-        || now - (roadRecord?.at || 0) >= 10 * 60 * 1000);
-      const shouldLoadTraffic = isActive('traffic') && (force || forceTdx || cityChanged || !state.lastTrafficPayload
-        || distanceFrom(trafficRecord) >= 3000 || now - (trafficRecord?.at || 0) >= 5 * 60 * 1000);
+      const shouldLoadRoads = false;
+      const shouldLoadTraffic = false;
       const bikeDatasetKey = `CITY:${cityCode}`;
       const shouldLoadBike = isActive('bike') && (force || forceTdx || cityChanged || state.loadedBikeCityCode !== bikeDatasetKey
         || distanceFrom(bikeRecord) >= 8000 || now - (bikeRecord?.at || 0) >= 5 * 60 * 1000);
