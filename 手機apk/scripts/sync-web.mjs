@@ -34,6 +34,18 @@ const replacements = [
     'if (window.__TAIWAN_SMART_LIFE_MOBILE__?.share) await window.__TAIWAN_SMART_LIFE_MOBILE__.share(shareData);\n        else if (navigator.share) await navigator.share(shareData);'
   ],
   [
+    'href="/手機apk/安裝檔/台灣智慧生活-android-debug.apk" download type="application/vnd.android.package-archive"',
+    'href="https://taiwan-information.onrender.com/" target="_blank" rel="noopener noreferrer"'
+  ],
+  [
+    'src="/手機apk/assets/icon-only.png"',
+    'src="app-icon.png"'
+  ],
+  [
+    '台灣智慧生活網apk下載',
+    '台灣智慧生活網'
+  ],
+  [
     '</style>',
     `  html.capacitor-app body { overscroll-behavior: none; }\n    html.capacitor-app input, html.capacitor-app textarea, html.capacitor-app select { -webkit-user-select: text; user-select: text; font-size: 16px; }\n    html.capacitor-app header { padding-top: max(0.75rem, env(safe-area-inset-top)); }\n    html.capacitor-app #service-drawer { padding-top: env(safe-area-inset-top); }\n    @media (max-width: 639px) {\n      html.capacitor-app #map .leaflet-top { top: calc(126px + env(safe-area-inset-top)); }\n      html.capacitor-app #request-message, html.capacitor-app #journey-map-pick-banner { top: calc(8.25rem + env(safe-area-inset-top)); }\n      html.capacitor-app #journey-card, html.capacitor-app #tutorial-card { max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 1rem); }\n    }\n  </style>`
   ]

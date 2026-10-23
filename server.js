@@ -53,28 +53,33 @@ const JOURNEY_GRAPH_MAX_STALE_MS = Math.max(
   60 * 60 * 1000,
   Number(process.env.JOURNEY_GRAPH_MAX_STALE_MS) || 24 * 60 * 60 * 1000
 );
-const TDX_REFRESH_INTERVAL_MS = Math.max(1_000, Number(process.env.TDX_REFRESH_INTERVAL_MS) || 5_000);
+const TDX_REFRESH_INTERVAL_MS = Math.max(1_000, Number(process.env.TDX_REFRESH_INTERVAL_MS) || 12_000);
 const TDX_DYNAMIC_REFRESH_INTERVAL_MS = Math.max(
   1_000,
   Number(process.env.TDX_DYNAMIC_REFRESH_INTERVAL_MS) || 12 * 1000
 );
+const TDX_MOBILITY_REFRESH_INTERVAL_MS = Math.max(
+  30 * 60 * 1000,
+  Number(process.env.TDX_MOBILITY_REFRESH_INTERVAL_MS) || 30 * 60 * 1000
+);
 const TDX_STATIC_REFRESH_INTERVAL_MS = Math.max(
-  TDX_DYNAMIC_REFRESH_INTERVAL_MS,
-  Number(process.env.TDX_STATIC_REFRESH_INTERVAL_MS) || 5 * 60 * 1000
+  24 * 60 * 60 * 1000,
+  Number(process.env.TDX_STATIC_REFRESH_INTERVAL_MS) || 24 * 60 * 60 * 1000
 );
 const JOURNEY_STATIC_REFRESH_INTERVAL_MS = TDX_STATIC_REFRESH_INTERVAL_MS;
 const JOURNEY_LIVE_REFRESH_INTERVAL_MS = TDX_DYNAMIC_REFRESH_INTERVAL_MS;
+const TDX_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const JOURNEY_GRAPH_ACTIVE_WINDOW_MS = Math.max(
-  JOURNEY_STATIC_REFRESH_INTERVAL_MS * 3,
-  Number(process.env.JOURNEY_GRAPH_ACTIVE_WINDOW_MS) || 30 * 60 * 1000
+  TDX_IDLE_TIMEOUT_MS,
+  Number(process.env.JOURNEY_GRAPH_ACTIVE_WINDOW_MS) || TDX_IDLE_TIMEOUT_MS
 );
 const JOURNEY_BOOKING_WINDOW_DAYS = Math.min(
   60,
   Math.max(1, Number(process.env.JOURNEY_BOOKING_WINDOW_DAYS) || 28)
 );
 const TDX_ACTIVE_CACHE_WINDOW_MS = Math.max(
-  TDX_REFRESH_INTERVAL_MS * 3,
-  Number(process.env.TDX_ACTIVE_CACHE_WINDOW_MS) || 30_000
+  TDX_IDLE_TIMEOUT_MS,
+  Number(process.env.TDX_ACTIVE_CACHE_WINDOW_MS) || TDX_IDLE_TIMEOUT_MS
 );
 const TDX_RATE_LIMIT_COOLDOWN_MS = Math.max(
   TDX_REFRESH_INTERVAL_MS,
@@ -216,11 +221,14 @@ const MIME_TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
-  '.svg': 'image/svg+xml'
+  '.svg': 'image/svg+xml',
+  '.apk': 'application/vnd.android.package-archive'
 };
 const PUBLIC_STATIC_FILES = new Set([
   'index.html', 'api_config.json', 'leaflet.css', 'leaflet.js',
-  'leaflet.markercluster.js', 'MarkerCluster.css', 'MarkerCluster.Default.css'
+  'leaflet.markercluster.js', 'MarkerCluster.css', 'MarkerCluster.Default.css',
+  '手機apk/assets/icon-only.png',
+  '手機apk/安裝檔/台灣智慧生活-android-debug.apk'
 ]);
 
 const tdxCredential = loadTdxCredential();
@@ -245,7 +253,13 @@ let nationwideBusSnapshot = {
   nextSourceIndex: 0
 };
 let nationwideBusRefreshPromise = null;
-let nationwideBusRefreshTimer = null;
+let nationwideBusRefreshAt = 0;
+let nationwideMobilityRefreshPromise = null;
+let nationwideMobilityRefreshAt = 0;
+let nationwideTransitRefreshPromise = null;
+let nationwideTransitRefreshAt = 0;
+let nationwideMobilityCityCursor = 0;
+let nationwideTransitScopeCursor = 0;
 try {
   const cachedBikePayload = JSON.parse(fs.readFileSync(BIKE_STATION_CACHE_FILE, 'utf8'));
   const cachedBikeStations = Array.isArray(cachedBikePayload) ? cachedBikePayload : cachedBikePayload.data;
@@ -278,6 +292,10 @@ try {
 }
 const tdxResponseCache = new Map();
 const roadNetworkCache = new Map();
+let lastTdxUserActivityAt = 0;
+const activeVisitorSessions = new Map();
+const ACTIVE_VISITOR_TTL_MS = 90_000;
+const ACTIVE_VISITOR_LOG_INTERVAL_MS = 60_000;
 const geocodeSearchCache = new Map();
 const routePlannerCache = new Map();
 const routePlannerResultCache = new Map();
@@ -298,7 +316,6 @@ let journeyGraphDiskCache = {
 };
 let journeyGraphPersistTimer = null;
 let journeyGraphPersistPromise = null;
-let journeyGraphRefreshTimer = null;
 const TDX_RESPONSE_CACHE_MS = TDX_DYNAMIC_REFRESH_INTERVAL_MS;
 let tdxRequestQueue = Promise.resolve();
 let lastTdxRequestAt = 0;
@@ -320,6 +337,15 @@ function resolveTdxPriority(options = {}) {
 function runWithTdxPriority(priority, task) {
   return tdxPriorityStorage.run(priority, task);
 }
+
+function hasRecentTdxDemand(now = Date.now()) {
+  return lastTdxUserActivityAt > 0 && now - lastTdxUserActivityAt < TDX_IDLE_TIMEOUT_MS;
+}
+
+function recordTdxUserActivity() {
+  lastTdxUserActivityAt = Date.now();
+}
+
 let tdxCacheRefreshPromise = null;
 let tdxCacheRefreshTimer = null;
 const adminSessions = new Map();
@@ -555,6 +581,61 @@ function constantTimeEqual(actual, expected) {
 function requestIp(request) {
   return String(request.headers['x-forwarded-for'] || request.socket.remoteAddress || '')
     .split(',')[0].trim();
+}
+
+async function handleActiveVisitorHeartbeat(request, response) {
+  try {
+    const origin = request.headers.origin;
+    const requestHost = String(request.headers.host || '').trim();
+    if (!origin) throw new UpstreamError('Visitor heartbeat origin is required', 403);
+    let originHost;
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      throw new UpstreamError('Invalid visitor heartbeat origin', 400);
+    }
+    if (originHost !== requestHost) {
+      throw new UpstreamError('Cross-origin visitor heartbeat is not allowed', 403);
+    }
+    const { parsed } = await readJsonBody(request);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(parsed.sessionId || '')
+      || typeof parsed.active !== 'boolean') {
+      throw new UpstreamError('A valid sessionId and boolean active flag are required', 400);
+    }
+    const sessionId = parsed.sessionId.toLowerCase();
+    const ip = requestIp(request).replace(/[\r\n]/g, '') || 'unknown';
+    const current = activeVisitorSessions.get(sessionId);
+    if (parsed.active === false) {
+      if (current?.ip === ip) activeVisitorSessions.delete(sessionId);
+    } else {
+      activeVisitorSessions.set(sessionId, { ip, lastSeenAt: Date.now() });
+    }
+    sendJson(response, 200, { success: true });
+  } catch (error) {
+    sendApiError(response, error);
+  }
+}
+
+function expireActiveVisitorSessions(now = Date.now()) {
+  activeVisitorSessions.forEach((session, sessionId) => {
+    if (now - session.lastSeenAt >= ACTIVE_VISITOR_TTL_MS) {
+      activeVisitorSessions.delete(sessionId);
+    }
+  });
+}
+
+function logActiveVisitorSessions() {
+  expireActiveVisitorSessions();
+  const sessions = [...activeVisitorSessions.values()];
+  const ips = sessions.map((session) => session.ip);
+  console.log(`[active-visitors] ${new Date().toISOString()} sessions=${sessions.length} ips=[${ips.join(', ')}]`);
+}
+
+function startActiveVisitorLogging() {
+  logActiveVisitorSessions();
+  const timer = setInterval(logActiveVisitorSessions, ACTIVE_VISITOR_LOG_INTERVAL_MS);
+  timer.unref?.();
 }
 
 function parseCookies(request) {
@@ -1309,11 +1390,14 @@ function tdxCityUrl(pathname, city, parameters = {}) {
 }
 
 function tdxRefreshIntervalForUrl(url) {
+  const mobilityPath = [
+    /\/Road\/Traffic\/Live\//,
+    /\/Bike\/Availability\//,
+    /\/Parking\/.*ParkingAvailability\//
+  ].some((pattern) => pattern.test(url.pathname));
+  if (mobilityPath) return TDX_MOBILITY_REFRESH_INTERVAL_MS;
   const dynamicPath = [
     /\/Bus\/(?:RealTimeByFrequency|RealTimeNearStop|EstimatedTimeOfArrival)\//,
-    /\/Bike\/Availability\//,
-    /\/Parking\/.*ParkingAvailability\//,
-    /\/Road\/Traffic\/Live\//,
     /\/Rail\/TRA\/TrainLiveBoard(?:\/|$)/,
     /\/Rail\/Metro\/(?:LiveBoard|LivePosition)\//
   ].some((pattern) => pattern.test(url.pathname));
@@ -1332,6 +1416,9 @@ function queueTdxRequest(task, options = {}) {
 
 async function requestTdxUrl(url, options = {}) {
   if (!tdxFetchingEnabled) throw new UpstreamError('管理員已關閉運輸資訊', 503);
+  if (options.backgroundRefresh && !hasRecentTdxDemand()) {
+    throw new UpstreamError('TDX background refresh paused because no user activity was detected', 503);
+  }
   if (!tdxCredential) throw new UpstreamError('TDX credential is not configured', 503);
   if (isTdxPaused()) throw new UpstreamError('TDX queue is paused due to rate limits', 429);
 
@@ -1357,6 +1444,9 @@ async function requestTdxUrl(url, options = {}) {
       if (!tdxFetchingEnabled) {
         throw new UpstreamError('管理員已關閉運輸資訊', 503);
       }
+      if (options.backgroundRefresh && !hasRecentTdxDemand()) {
+        throw new UpstreamError('TDX background refresh paused because no user activity was detected', 503);
+      }
       return fetchJson(url, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
       }, 60_000);
@@ -1379,7 +1469,7 @@ async function refreshTdxCacheEntry(entry, options = {}) {
   if (entry.pending) return entry.pending;
   entry.pending = (async () => {
     const priority = resolveTdxPriority({ ...options, backgroundRefresh: entry.backgroundRefresh });
-    const data = await requestTdxUrl(entry.url, { priority });
+    const data = await requestTdxUrl(entry.url, { priority, backgroundRefresh: true });
     entry.data = data;
     entry.updatedAt = Date.now();
     entry.expiresAt = entry.updatedAt + entry.refreshIntervalMs;
@@ -1441,7 +1531,7 @@ async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
 }
 
 async function refreshActiveTdxCache() {
-  if (!tdxFetchingEnabled) return [];
+  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return [];
   if (isTdxPaused()) {
     console.warn('Skipping active TDX cache refresh because TDX queue is paused');
     return [];
@@ -1450,10 +1540,7 @@ async function refreshActiveTdxCache() {
   const now = Date.now();
   const entries = [...tdxResponseCache.values()]
     .filter((entry) => entry.backgroundRefresh
-      && entry.lastAccessAt >= now - Math.max(
-        TDX_ACTIVE_CACHE_WINDOW_MS,
-        entry.refreshIntervalMs + TDX_REFRESH_INTERVAL_MS * 2
-      )
+      && entry.lastAccessAt >= now - TDX_ACTIVE_CACHE_WINDOW_MS
       && now >= entry.updatedAt + entry.refreshIntervalMs);
   if (!entries.length) return [];
 
@@ -1466,6 +1553,7 @@ async function refreshActiveTdxCache() {
 
 function startTdxCacheRefresh() {
   tdxCacheRefreshTimer = setInterval(() => {
+    if (!hasRecentTdxDemand()) return;
     if (isTdxPaused()) {
       console.warn('Skipping TDX shared cache refresh; TDX queue is paused');
       return;
@@ -1474,12 +1562,135 @@ function startTdxCacheRefresh() {
     const resumedMs = Date.now() - tdxRequestPausedUntil;
     if (resumedMs >= 0 && resumedMs < 30_000) {
       const jitter = Math.floor(Math.random() * 30_000);
-      setTimeout(() => refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message)), jitter);
+      setTimeout(() => runDemandDrivenTdxRefreshes(), jitter);
       return;
     }
-    refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message));
+    runDemandDrivenTdxRefreshes();
   }, TDX_REFRESH_INTERVAL_MS);
   tdxCacheRefreshTimer.unref?.();
+}
+
+function nationwideMobilityCities() {
+  return [...new Map(Object.entries(TDX_CITY_BY_PORTAL_CODE)
+    .map(([portalCityCode, tdxCity]) => [tdxCity, { portalCityCode, tdxCity }])).values()];
+}
+
+async function refreshNationwideMobilityCaches() {
+  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return;
+  if (nationwideMobilityRefreshPromise) return nationwideMobilityRefreshPromise;
+  const cities = nationwideMobilityCities();
+  nationwideMobilityRefreshPromise = (async () => {
+    while (nationwideMobilityCityCursor < cities.length && hasRecentTdxDemand() && !isTdxPaused()) {
+      const { portalCityCode, tdxCity } = cities[nationwideMobilityCityCursor];
+      const parameters = { '$top': 10_000 };
+      const center = PORTAL_CONFIG.cities[portalCityCode]?.mapCenter;
+      const requests = [
+        fetchTdxCity('v2/Road/Traffic/Section/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' }),
+        fetchTdxCity('v2/Road/Traffic/SectionShape/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' }),
+        fetchTdxCity('v2/Road/Traffic/Live/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' }),
+        fetchTdxCity('v2/Bike/Station/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' }),
+        fetchTdxCity('v2/Bike/Availability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' }),
+        fetchTdxCity('v1/Parking/OffStreet/CarPark/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' }),
+        fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
+      ];
+      const results = await Promise.allSettled(requests);
+      const failed = results.filter((result) => result.status === 'rejected');
+      failed.forEach((result) => console.error(
+        `Nationwide TDX mobility refresh failed for ${tdxCity}:`, result.reason.message
+      ));
+      if (failed.some((result) => result.reason.status === 429)) break;
+      nationwideMobilityCityCursor += 1;
+    }
+    if (nationwideMobilityCityCursor >= cities.length) {
+      nationwideMobilityCityCursor = 0;
+      nationwideMobilityRefreshAt = Date.now();
+      console.log(`Nationwide TDX traffic, YouBike, and parking cache refreshed for ${cities.length} cities`);
+    }
+  })().finally(() => {
+    nationwideMobilityRefreshPromise = null;
+  });
+  return nationwideMobilityRefreshPromise;
+}
+
+function nationwideTransitScopes() {
+  const bus = [
+    ...Object.entries(TDX_CITY_BY_PORTAL_CODE).map(([portalCityCode, tdxCity]) => ({
+      type: 'bus', portalCityCode, tdxCity, key: tdxCity
+    })),
+    { type: 'bus', portalCityCode: 'InterCity', tdxCity: 'InterCity', key: 'InterCity' }
+  ];
+  const metro = Object.entries(METRO_SYSTEMS_BY_CITY).flatMap(([portalCityCode, systems]) => (
+    systems.map((system) => ({
+      type: 'metro', portalCityCode, system, key: system,
+      scope: { portalCityCode, tdxCity: TDX_CITY_BY_PORTAL_CODE[portalCityCode], system }
+    }))
+  ));
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+  return [
+    ...bus,
+    { type: 'rail', mode: 'tra', date: today, key: `tra:${today}` },
+    { type: 'rail', mode: 'thsr', date: today, key: `thsr:${today}` },
+    ...metro
+  ];
+}
+
+async function refreshNationwideTransitCaches() {
+  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return;
+  if (nationwideTransitRefreshPromise) return nationwideTransitRefreshPromise;
+  const scopes = nationwideTransitScopes();
+  nationwideTransitRefreshPromise = (async () => {
+    while (nationwideTransitScopeCursor < scopes.length && hasRecentTdxDemand() && !isTdxPaused()) {
+      const scope = scopes[nationwideTransitScopeCursor];
+      try {
+        await runWithTdxPriority('low', async () => {
+          if (scope.type === 'bus') {
+            await refreshBusJourneyNetwork(
+              { portalCityCode: scope.portalCityCode, tdxCity: scope.tdxCity }, scope.key
+            );
+          } else if (scope.type === 'rail') {
+            await refreshRailJourneyNetwork(scope.mode, scope.date, scope.key);
+          } else {
+            await refreshMetroJourneyNetwork(scope.scope, scope.key);
+          }
+        });
+        nationwideTransitScopeCursor += 1;
+      } catch (error) {
+        console.error(`Nationwide ${scope.type} TDX refresh failed for ${scope.key}:`, error.message);
+        if (error.status === 429) break;
+        nationwideTransitScopeCursor += 1;
+      }
+    }
+    if (nationwideTransitScopeCursor >= scopes.length) {
+      nationwideTransitScopeCursor = 0;
+      nationwideTransitRefreshAt = Date.now();
+      console.log(`Nationwide TDX static bus, rail, THSR, and metro data refreshed for ${scopes.length} systems`);
+    }
+  })().finally(() => {
+    nationwideTransitRefreshPromise = null;
+  });
+  return nationwideTransitRefreshPromise;
+}
+
+function runDemandDrivenTdxRefreshes() {
+  if (!tdxFetchingEnabled || !hasRecentTdxDemand() || isTdxPaused()) return;
+  refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message));
+  refreshActiveJourneyGraphs().catch((error) => console.error('Journey graph refresh failed:', error.message));
+
+  const now = Date.now();
+  if (now - nationwideBusRefreshAt >= TDX_DYNAMIC_REFRESH_INTERVAL_MS) {
+    nationwideBusRefreshAt = now;
+    refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
+  }
+  if (!nationwideMobilityRefreshPromise
+    && now - nationwideMobilityRefreshAt >= TDX_MOBILITY_REFRESH_INTERVAL_MS) {
+    refreshNationwideMobilityCaches().catch((error) => console.error('Nationwide mobility refresh failed:', error.message));
+  }
+  if (!nationwideTransitRefreshPromise
+    && now - nationwideTransitRefreshAt >= TDX_STATIC_REFRESH_INTERVAL_MS) {
+    refreshNationwideTransitCaches().catch((error) => console.error('Nationwide transit refresh failed:', error.message));
+  }
 }
 
 async function fetchTdxCity(pathname, city, parameters = {}, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
@@ -2160,10 +2371,29 @@ function parseWktLines(wkt) {
     .filter((line) => line.length >= 2);
 }
 
-function trafficStatus(congestionLevel, speed) {
+function isPolylineWithinRadius(lines, lat, lng, radiusMeters) {
+  const metersPerDegree = Math.PI * 6_371_000 / 180;
+  const longitudeScale = metersPerDegree * Math.cos(lat * Math.PI / 180);
+  return lines.some((line) => line.slice(1).some((point, index) => {
+    const previous = line[index];
+    const x1 = (previous[1] - lng) * longitudeScale;
+    const y1 = (previous[0] - lat) * metersPerDegree;
+    const x2 = (point[1] - lng) * longitudeScale;
+    const y2 = (point[0] - lat) * metersPerDegree;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const segmentLengthSquared = dx * dx + dy * dy;
+    const projection = segmentLengthSquared
+      ? Math.max(0, Math.min(1, -(x1 * dx + y1 * dy) / segmentLengthSquared))
+      : 0;
+    return Math.hypot(x1 + projection * dx, y1 + projection * dy) <= radiusMeters;
+  }));
+}
+
+function trafficStatus(congestionLevel) {
   const level = Number(congestionLevel);
   if (level === -1) return { key: 'closed', label: '道路封閉' };
-  if (level === -99 || (!Number.isFinite(level) && !Number.isFinite(speed))) return { key: 'unknown', label: '無即時監測資料' };
+  if (level === -99 || !Number.isFinite(level)) return { key: 'unknown', label: '無即時監測資料' };
   if (level >= 3) return { key: 'congested', label: '塞車' };
   if (level >= 2) return { key: 'slow', label: '有點塞車' };
   return { key: 'smooth', label: '順暢行駛' };
@@ -2388,7 +2618,7 @@ async function fetchNationwideBusSource(source) {
 }
 
 async function refreshNationwideBusSnapshot() {
-  if (!tdxFetchingEnabled) return nationwideBusSnapshot;
+  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return nationwideBusSnapshot;
   if (isTdxPaused()) {
     console.warn('refreshNationwideBusSnapshot: skipped because TDX queue is paused');
     return nationwideBusSnapshot;
@@ -2435,29 +2665,6 @@ async function refreshNationwideBusSnapshot() {
     nationwideBusRefreshPromise = null;
   });
   return nationwideBusRefreshPromise;
-}
-
-function startNationwideBusRefresh() {
-  // Initial run respects queue pause and staggers immediate resume
-  if (!isTdxPaused()) {
-    refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
-  } else {
-    console.warn('Initial nationwide bus refresh skipped; TDX queue paused');
-  }
-  nationwideBusRefreshTimer = setInterval(() => {
-    if (isTdxPaused()) {
-      console.warn('Skipping nationwide bus refresh; TDX queue paused');
-      return;
-    }
-    const resumedMs = Date.now() - tdxRequestPausedUntil;
-    if (resumedMs >= 0 && resumedMs < 30_000) {
-      const jitter = Math.floor(Math.random() * 30_000);
-      setTimeout(() => refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message)), jitter);
-      return;
-    }
-    refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
-  }, BUS_REFRESH_INTERVAL_MS);
-  nationwideBusRefreshTimer.unref?.();
 }
 
 async function proxyBus(requestUrl, response) {
@@ -2573,7 +2780,7 @@ async function fetchBikeCityData(city, origin = null, includeAvailability = true
   if (includeAvailability) {
     try {
       availabilityPayload = await fetchTdxCity(
-        'v2/Bike/Availability/City', city, { '$top': 5000 }, TDX_DYNAMIC_REFRESH_INTERVAL_MS
+        'v2/Bike/Availability/City', city, { '$top': 5000 }, TDX_MOBILITY_REFRESH_INTERVAL_MS
       );
     } catch (error) {
       console.error(`TDX ${city} YouBike availability unavailable; station locations are retained:`, error.message);
@@ -2729,7 +2936,7 @@ async function fetchParkingCityData(city, origin, radiusMeters) {
   }, TDX_STATIC_REFRESH_INTERVAL_MS);
   const availabilityPromise = fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', city, {
     '$top': 10000
-  }, TDX_DYNAMIC_REFRESH_INTERVAL_MS).catch((error) => {
+  }, TDX_MOBILITY_REFRESH_INTERVAL_MS).catch((error) => {
     console.error(`TDX ${city} parking availability unavailable; parking locations are retained:`, error.message);
     return [];
   });
@@ -2787,7 +2994,7 @@ async function proxyParking(requestUrl, response) {
       success: true,
       source: '交通部 TDX 路外停車場與剩餘車位',
       observedAt: new Date().toISOString(),
-      refreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
+      refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
       data
     });
   } catch (error) {
@@ -2798,7 +3005,7 @@ async function proxyParking(requestUrl, response) {
         message: '請求過多，請稍後再試；目前暫無停車場即時資料',
         source: '交通部 TDX 停車場降級模式',
         observedAt: new Date().toISOString(),
-        refreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
+        refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
         data: []
       });
       return;
@@ -2808,7 +3015,7 @@ async function proxyParking(requestUrl, response) {
 }
 
 async function proxyRoadNetwork(requestUrl, response) {
-  // 即時路況/道路線形功能已暫時停用，不向 Overpass API 或任何外部服務發送請求
+  // 舊的獨立道路底圖 API 不再使用；即時路況線形由 TDX 的 /api/tdx/traffic 提供。
   sendJson(response, 200, {
     success: false,
     message: '此功能暫不開放，造成不便敬請見諒。'
@@ -2816,11 +3023,53 @@ async function proxyRoadNetwork(requestUrl, response) {
 }
 
 async function proxyTraffic(requestUrl, response) {
-  // 即時路況功能已暫時停用，不向 TDX 或任何外部服務發送請求
-  sendJson(response, 200, {
-    success: false,
-    message: '此功能暫不開放，造成不便敬請見諒。'
-  });
+  try {
+    const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
+    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
+    const requestedRadius = Number(requestUrl.searchParams.get('radius'));
+    const radiusMeters = Number.isFinite(requestedRadius)
+      ? Math.min(30_000, Math.max(1_000, requestedRadius))
+      : 5_000;
+    const parameters = { '$top': 10_000 };
+    const [sectionsPayload, shapesPayload, livePayload] = await Promise.all([
+      fetchTdxCity('v2/Road/Traffic/Section/City', city, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
+      fetchTdxCity('v2/Road/Traffic/SectionShape/City', city, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
+      fetchTdxCity('v2/Road/Traffic/Live/City', city, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS)
+    ]);
+    const sections = asArray(sectionsPayload, ['Sections']);
+    const shapes = asArray(shapesPayload, ['SectionShapes']);
+    const liveItems = asArray(livePayload, ['LiveTraffics']);
+    const sectionById = new Map(sections.map((section) => [String(section.SectionID), section]));
+    const liveById = new Map(liveItems.map((item) => [String(item.SectionID), item]));
+    const roads = shapes.map((shape) => {
+      const lines = parseWktLines(shape.Geometry);
+      if (!lines.length || !isPolylineWithinRadius(lines, lat, lng, radiusMeters)) return null;
+      const section = sectionById.get(String(shape.SectionID)) || {};
+      const live = liveById.get(String(shape.SectionID)) || {};
+      const speed = Number(live.TravelSpeed);
+      const status = trafficStatus(live.CongestionLevel);
+      return {
+        sectionId: shape.SectionID,
+        roadName: section.RoadName || section.SectionName || String(shape.SectionID || '未命名路段'),
+        sectionName: section.SectionName || '',
+        lines,
+        speed: Number.isFinite(speed) && speed >= 0 ? speed : null,
+        congestionLevel: live.CongestionLevel ?? null,
+        status: status.key,
+        statusLabel: status.label,
+        updateTime: live.DataCollectTime || livePayload.UpdateTime || null
+      };
+    }).filter(Boolean);
+    sendJson(response, 200, {
+      success: true,
+      source: '交通部 TDX 道路路段、路段線形與即時路況',
+      observedAt: new Date().toISOString(),
+      refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
+      data: { roads }
+    });
+  } catch (error) {
+    sendApiError(response, error);
+  }
 }
 
 const JOURNEY_MODE_LABELS = { bus: '公車', tra: '臺鐵', thsr: '高鐵', metro: '捷運' };
@@ -4669,7 +4918,7 @@ async function searchMetroJourneys(scope, originId, destinationId, departure, op
 }
 
 async function refreshActiveJourneyGraphs() {
-  if (!tdxFetchingEnabled) return [];
+  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return [];
   const now = Date.now();
   const isDue = (entry) => entry.network
     && entry.lastAccessAt >= now - JOURNEY_GRAPH_ACTIVE_WINDOW_MS
@@ -4685,15 +4934,6 @@ async function refreshActiveJourneyGraphs() {
     if (isDue(entry)) tasks.push(refreshMetroJourneyNetwork(entry.scope, cacheKey));
   });
   return Promise.allSettled(tasks);
-}
-
-function startJourneyGraphRefresh() {
-  journeyGraphRefreshTimer = setInterval(() => {
-    refreshActiveJourneyGraphs().catch((error) => {
-      console.error('Journey graph refresh failed:', error.message);
-    });
-  }, JOURNEY_STATIC_REFRESH_INTERVAL_MS);
-  journeyGraphRefreshTimer.unref?.();
 }
 
 async function proxyJourneyOptions(requestUrl, response) {
@@ -6513,6 +6753,22 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(204, corsHeaders()).end();
     return;
   }
+  if (request.method === 'GET'
+    && (requestUrl.pathname.startsWith('/api/tdx/') || requestUrl.pathname === '/api/route/planner')) {
+    recordTdxUserActivity();
+    if (nationwideBusSnapshot.updateSequence === 0 && !nationwideBusRefreshPromise) {
+      nationwideBusRefreshAt = Date.now();
+      setImmediate(() => {
+        refreshNationwideBusSnapshot().catch((error) => {
+          console.error('Initial nationwide bus refresh failed:', error.message);
+        });
+      });
+    }
+  }
+  if (request.method === 'POST' && requestUrl.pathname === '/api/presence') {
+    await handleActiveVisitorHeartbeat(request, response);
+    return;
+  }
   if (request.method === 'GET' && requestUrl.pathname === '/api/status') {
     sendJson(response, 200, {
       success: true,
@@ -6550,8 +6806,9 @@ const server = http.createServer(async (request, response) => {
       tdxRefreshIntervalSeconds: TDX_REFRESH_INTERVAL_MS / 1000,
       tdxStaticRefreshIntervalSeconds: TDX_STATIC_REFRESH_INTERVAL_MS / 1000,
       tdxDynamicRefreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
-      tdxTrafficBikeRefreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
-      tdxParkingRefreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
+      tdxTrafficBikeRefreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
+      tdxParkingRefreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
+      tdxIdleTimeoutSeconds: TDX_IDLE_TIMEOUT_MS / 1000,
       journeyStaticRefreshIntervalSeconds: JOURNEY_STATIC_REFRESH_INTERVAL_MS / 1000,
       journeyLiveRefreshIntervalSeconds: JOURNEY_LIVE_REFRESH_INTERVAL_MS / 1000,
       journeyGraphActiveWindowSeconds: JOURNEY_GRAPH_ACTIVE_WINDOW_MS / 1000,
@@ -6721,6 +6978,7 @@ server.on('error', (error) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Taiwan Smart Life portal: ${LOCAL_ORIGIN}`);
+  startActiveVisitorLogging();
   console.log(`Environment file: ${environmentFileLoaded ? 'loaded .env' : 'no .env file'}`);
   console.log(`CWA datasets: ${CWA_DATASET_IDS.join(', ')}`);
   console.log(`CWA emergency datasets: ${CWA_EMERGENCY_DATASET_IDS.join(', ')}`);
@@ -6730,7 +6988,5 @@ server.listen(PORT, HOST, () => {
   console.log(`TDX transport: ${tdxCredentials.length ? `${tdxCredentials.length} credential pair(s); single-credential FIFO queue` : 'missing TDX credentials'}`);
   console.log(`GraphHopper routing: ${graphHopperApiKeys.length ? `${graphHopperApiKeys.length} API key(s)` : 'missing GRAPHHOPPER_API_KEY_1/2'}`);
   startTdxCacheRefresh();
-  startNationwideBusRefresh();
-  startJourneyGraphRefresh();
   startCwaEmergencyRefresh();
 });

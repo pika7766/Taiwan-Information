@@ -152,6 +152,18 @@ test('announcements persist and CWA emergencies are retained without duplicates'
       return payload.data.hazards?.length === 2 && payload.data.emergencies.length === 1 ? payload : null;
     });
     assert.equal(initial.data.announcements.length, 0);
+    const portalPage = await (await fetch(baseUrl)).text();
+    assert.match(portalPage, /href="\/手機apk\/安裝檔\/台灣智慧生活-android-debug\.apk"/);
+    assert.match(portalPage, /台灣智慧生活網apk下載/);
+    assert.ok(portalPage.indexOf('id="portal-app-link"') < portalPage.indexOf('id="links-government-title"'));
+    const apkDownload = await fetch(`${baseUrl}/手機apk/安裝檔/台灣智慧生活-android-debug.apk`, {
+      method: 'HEAD'
+    });
+    assert.equal(apkDownload.status, 200);
+    assert.equal(apkDownload.headers.get('content-type'), 'application/vnd.android.package-archive');
+    const appIcon = await fetch(`${baseUrl}/手機apk/assets/icon-only.png`, { method: 'HEAD' });
+    assert.equal(appIcon.status, 200);
+    assert.equal(appIcon.headers.get('content-type'), 'image/png');
     assert.deepEqual(new Set(initial.data.emergencies.map((item) => item.category)), new Set(['颱風警報']));
     assert.match(initial.data.emergencies[0].title, /颱風即時通知/);
     assert.ok(initial.data.emergencies[0].affectedAreas.length > 3);
