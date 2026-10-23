@@ -372,7 +372,13 @@
             <span class="flex items-center gap-2"><span id="emergencies-count" class="text-xs font-bold text-red-700">0</span><span id="emergencies-chevron" class="text-red-500" aria-hidden="true">⌄</span></span>
           </button>
           <p id="emergencies-status" class="mt-1 text-xs leading-5 text-slate-500" role="status"></p>
-          <div id="emergencies-list" class="mt-2 space-y-2" aria-live="polite"></div>
+          <div id="emergencies-list" class="mt-3 space-y-3" aria-live="polite" hidden>
+            <label class="block">
+              <span class="mb-1 block text-xs font-bold text-slate-600">選擇縣市查看氣象署災害訊息</span>
+              <select id="emergencies-city-select" class="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:border-red-600 focus:ring-2 focus:ring-red-100" aria-label="選擇縣市查看災害訊息"></select>
+            </label>
+            <div id="emergencies-city-alerts" class="space-y-2"></div>
+          </div>
         </section>
         <section class="mb-4 border-b border-slate-200 pb-4" aria-labelledby="personal-tools-title">
           <div class="flex items-center justify-between gap-3">
@@ -679,8 +685,8 @@
             <img class="block w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-contain" src="images/tutorial-information.png" alt="服務選單中的系統公告與中央氣象署緊急即時資訊範例">
             <h3 class="mt-4 text-base font-bold text-slate-950">公告與緊急資訊</h3>
             <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
-              <li>開啟「服務選單」即可看到最新一則系統公告與中央氣象署緊急即時資訊。</li>
-              <li>點擊「系統公告」或「緊急即時資訊」標題可展開全部歷史；點擊單則標題可查看完整內容與影響區域。</li>
+              <li>開啟「服務選單」可查看系統公告；展開「緊急即時資訊」後，選擇縣市即可查看當地中央氣象署災害訊息。</li>
+              <li>災害訊息依接收時間由新到舊排列；點擊單則標題可展開完整內容與影響區域。</li>
               <li>Android、iPhone 或 iPad App 收到新的中央氣象署緊急資訊時會依系統背景排程發出通知；網頁版只在服務選單顯示。</li>
             </ul>
           </section>
@@ -1050,6 +1056,7 @@
       emergencies: [],
       announcementsExpanded: localStorage.getItem('portal-announcements-expanded') === 'true',
       emergenciesExpanded: localStorage.getItem('portal-emergencies-expanded') === 'true',
+      selectedEmergencyCityCode: localStorage.getItem('portal-emergency-city'),
       adminAnnouncementPreviewSignature: '',
       adminAnnouncements: [],
       adminAuthenticated: false,
@@ -1180,6 +1187,8 @@
       emergenciesChevron: document.getElementById('emergencies-chevron'),
       emergenciesStatus: document.getElementById('emergencies-status'),
       emergenciesList: document.getElementById('emergencies-list'),
+      emergenciesCitySelect: document.getElementById('emergencies-city-select'),
+      emergenciesCityAlerts: document.getElementById('emergencies-city-alerts'),
       adminModal: document.getElementById('admin-modal'),
       adminCard: document.getElementById('admin-card'),
       closeAdminButton: document.getElementById('close-admin-button'),
@@ -2337,7 +2346,11 @@
       topLine.append(title, severity);
       const metadata = document.createElement('span');
       metadata.className = 'mt-1 block text-xs text-slate-500';
-      metadata.textContent = [item.publisher || item.source, formatOfficialTime(item.publishedAt || item.issuedAt || item.receivedAt)]
+      metadata.textContent = [item.publisher || item.source, formatOfficialTime(
+        type === 'emergency'
+          ? item.receivedAt || item.issuedAt || item.publishedAt
+          : item.publishedAt || item.issuedAt || item.receivedAt
+      )]
         .filter(Boolean).join(' · ');
       const excerpt = document.createElement('span');
       excerpt.className = 'mt-1 block text-xs leading-5 text-slate-700';
@@ -2359,6 +2372,64 @@
       return details;
     }
 
+    function emergencyReceivedTimestamp(item) {
+      const timestamp = Date.parse(item.receivedAt || item.issuedAt || item.publishedAt || '');
+      return Number.isFinite(timestamp) ? timestamp : 0;
+    }
+
+    function groupEmergencyAlertsByCity(alerts, cities) {
+      return Object.entries(cities || {}).map(([cityCode, city]) => {
+        const cityName = normalizePlaceName(city.cityName || '');
+        const items = alerts.filter((alert) => {
+          const affectedAreas = Array.isArray(alert.affectedCities) && alert.affectedCities.length
+            ? alert.affectedCities
+            : alert.affectedAreas;
+          return Array.isArray(affectedAreas) && affectedAreas.some((area) => (
+            normalizePlaceName(String(area || '')).includes(cityName)
+          ));
+        }).sort((left, right) => (
+          emergencyReceivedTimestamp(right) - emergencyReceivedTimestamp(left)
+          || Date.parse(right.issuedAt || 0) - Date.parse(left.issuedAt || 0)
+        ));
+        return { cityCode, cityName: city.cityName, items };
+      });
+    }
+
+    function renderEmergencyCityAlerts() {
+      const select = elements.emergenciesCitySelect;
+      const container = elements.emergenciesCityAlerts;
+      if (!select || !container) return;
+
+      const cities = state.config?.cities || {};
+      const cityCodes = Object.keys(cities);
+      if (!cityCodes.includes(state.selectedEmergencyCityCode)) {
+        state.selectedEmergencyCityCode = cityCodes.includes(state.selectedCityCode)
+          ? state.selectedCityCode
+          : cityCodes[0] || '';
+      }
+      const groups = groupEmergencyAlertsByCity(state.emergencies, cities);
+      select.replaceChildren(...cityCodes.map((cityCode) => {
+        const option = document.createElement('option');
+        const alertCount = groups.find((group) => group.cityCode === cityCode)?.items.length || 0;
+        option.value = cityCode;
+        option.textContent = `${cities[cityCode].cityName}（${alertCount}）`;
+        return option;
+      }));
+      select.value = state.selectedEmergencyCityCode;
+
+      const selectedGroup = groups.find((group) => group.cityCode === state.selectedEmergencyCityCode);
+      if (!selectedGroup?.items.length) {
+        const empty = document.createElement('p');
+        empty.className = 'rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600';
+        empty.textContent = state.publicCwaFetchingEnabled === false
+          ? '管理員已關閉氣象資訊，目前沒有可顯示的災害訊息。'
+          : `${selectedGroup?.cityName || '所選縣市'}目前沒有中央氣象署災害訊息。`;
+        container.replaceChildren(empty);
+        return;
+      }
+      container.replaceChildren(...selectedGroup.items.map((item) => portalInformationItem(item, 'emergency')));
+    }
+
     function renderPortalInformation(cwaFetchingEnabled = state.publicCwaFetchingEnabled) {
       const sections = [
         {
@@ -2366,13 +2437,6 @@
           list: elements.announcementsList, count: elements.announcementsCount,
           toggle: elements.announcementsToggle, chevron: elements.announcementsChevron,
           status: elements.announcementsStatus, empty: '目前沒有系統公告'
-        },
-        {
-          type: 'emergency', items: state.emergencies, expanded: state.emergenciesExpanded,
-          list: elements.emergenciesList, count: elements.emergenciesCount,
-          toggle: elements.emergenciesToggle, chevron: elements.emergenciesChevron,
-          status: elements.emergenciesStatus,
-          empty: cwaFetchingEnabled === false ? '管理員已關閉天氣資訊；歷史緊急資訊仍保留' : '目前沒有緊急即時資訊'
         }
       ];
       sections.forEach((section) => {
@@ -2383,11 +2447,24 @@
         const visibleItems = section.expanded ? section.items : section.items.slice(0, 1);
         section.list.replaceChildren(...visibleItems.map((item) => portalInformationItem(item, section.type)));
       });
+      elements.emergenciesCount.textContent = String(state.emergencies.length);
+      elements.emergenciesToggle.setAttribute('aria-expanded', String(state.emergenciesExpanded));
+      elements.emergenciesChevron.textContent = state.emergenciesExpanded ? '⌃' : '⌄';
+      elements.emergenciesList.hidden = !state.emergenciesExpanded;
+      elements.emergenciesStatus.textContent = state.emergencies.length
+        ? '選擇縣市查看當地訊息；最新接收的災害訊息排列在最上方。'
+        : cwaFetchingEnabled === false
+          ? '管理員已關閉天氣資訊；目前沒有可顯示的災害訊息。'
+          : '目前沒有中央氣象署災害訊息。';
+      if (state.emergenciesExpanded) renderEmergencyCityAlerts();
     }
 
     function togglePortalInformation(type) {
       const stateKey = type === 'emergency' ? 'emergenciesExpanded' : 'announcementsExpanded';
       state[stateKey] = !state[stateKey];
+      if (type === 'emergency' && state[stateKey] && !state.selectedEmergencyCityCode) {
+        state.selectedEmergencyCityCode = state.selectedCityCode || state.config?.defaultCity || '';
+      }
       localStorage.setItem(`portal-${type === 'emergency' ? 'emergencies' : 'announcements'}-expanded`, String(state[stateKey]));
       renderPortalInformation();
     }
@@ -2400,8 +2477,10 @@
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || !payload.success) throw new Error(payload.message || `HTTP ${response.status}`);
         state.announcements = Array.isArray(payload.data?.announcements) ? payload.data.announcements : [];
-        state.emergencies = Array.isArray(payload.data?.emergencies) ? payload.data.emergencies : [];
         const hazards = Array.isArray(payload.data?.hazards) ? payload.data.hazards : [];
+        state.emergencies = hazards.length
+          ? hazards
+          : Array.isArray(payload.data?.emergencies) ? payload.data.emergencies : [];
         const hazardsSignature = hazards.map((alert) => (
           `${alert.id}:${alert.affectedCities?.join(',') || ''}:${alert.details || ''}`
         )).join('|');
@@ -5795,6 +5874,11 @@
       bindEventListener(elements.menuButton, 'click', openMenu, '#menu-button');
       bindEventListener(elements.announcementsToggle, 'click', () => togglePortalInformation('announcement'), '#announcements-toggle');
       bindEventListener(elements.emergenciesToggle, 'click', () => togglePortalInformation('emergency'), '#emergencies-toggle');
+      bindEventListener(elements.emergenciesCitySelect, 'change', () => {
+        state.selectedEmergencyCityCode = elements.emergenciesCitySelect.value;
+        localStorage.setItem('portal-emergency-city', state.selectedEmergencyCityCode);
+        renderEmergencyCityAlerts();
+      }, '#emergencies-city-select');
       bindEventListener(elements.journeyButton, 'click', openJourneyModal, '#journey-button');
       bindEventListener(elements.closeJourneyButton, 'click', closeJourneyModal, '#close-journey-button');
       bindEventListener(elements.journeyModal, 'click', (event) => {
