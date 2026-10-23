@@ -27,7 +27,12 @@ function createRendererContext() {
   };
   const state = {
     transportLayers: { bike: bikeLayer, parking: parkingLayer },
-    config: { cities: { Taipei: { cityName: '臺北市' } } },
+    config: {
+      cities: {
+        Taipei: { cityName: '臺北市' },
+        Tainan: { cityName: '臺南市' }
+      }
+    },
     hazards: [{
       affectedCities: ['臺北市'],
       title: '豪雨特報',
@@ -49,7 +54,9 @@ function createRendererContext() {
   const context = {
     state,
     normalizePlaceName: (value = '') => value.trim().replaceAll('台', '臺'),
-    findNearestCityCode: () => 'Taipei',
+    findCityCodeByName: (value = '') => Object.entries(state.config.cities)
+      .find(([, city]) => city.cityName === value)?.[0] || null,
+    findNearestCityCode: (latitude) => latitude < 24 ? 'Tainan' : 'Taipei',
     escapeHtml,
     formatOfficialTime: () => '更新時間',
     showBikeDetails() {},
@@ -120,4 +127,44 @@ test('station disaster warnings match raw CWA area strings and show concise high
   assert.match(warning, /海上陸上颱風、陸上強風/);
   assert.match(warning, /發布時間/);
   assert.doesNotMatch(warning, /zh-TW|2026-10-23 22:15:00|臺南市；67/);
+});
+
+test('station city takes precedence over a different requested dataset city', () => {
+  const { context } = createRendererContext();
+  context.state.config.cities = {
+    Taipei: { cityName: '臺北市' },
+    Tainan: { cityName: '臺南市' }
+  };
+  context.state.hazards = [{
+    category: '颱風警報',
+    title: '海上陸上颱風警報',
+    summary: '臺南市；海上陸上颱風；陸上強風',
+    affectedCities: ['臺南市'],
+    affectedAreas: ['臺南市'],
+    receivedAt: '2026-10-23T22:16:00+08:00'
+  }];
+  context.emergencyReceivedTimestamp = (alert) => Date.parse(alert.receivedAt || 0);
+  context.findCityCodeByName = () => null;
+  const helper = readFunction(
+    '    function disasterAlertHighlights(',
+    '    function renderBikeLayer('
+  );
+  vm.runInNewContext(helper, context);
+
+  const warning = context.stationDisasterWarning(
+    '停車場',
+    { city: 'Tainan', lat: 25.033, lng: 121.565 },
+    'CITY:Taipei'
+  );
+
+  assert.match(warning, /臺南市停車場/);
+  assert.match(warning, /陸上強風/);
+  assert.doesNotMatch(warning, /臺北市/);
+
+  context.state.hazards = [];
+  assert.equal(context.stationDisasterWarning(
+    '停車場',
+    { city: 'Tainan', lat: 25.033, lng: 121.565 },
+    'CITY:Taipei'
+  ), '');
 });

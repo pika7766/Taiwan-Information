@@ -2673,9 +2673,15 @@
     }
 
     function stationDisasterWarning(type, item, datasetKey) {
-      const cityCode = String(datasetKey || '').replace(/^CITY:/, '');
-      const city = state.config?.cities?.[cityCode]
-        || state.config?.cities?.[findNearestCityCode(Number(item?.lat), Number(item?.lng))];
+      const requestedCityCode = String(datasetKey || '').replace(/^CITY:/, '');
+      const itemCityCode = state.config?.cities?.[item?.city]
+        ? item.city
+        : findCityCodeByName(String(item?.city || ''));
+      const coordinateCityCode = Number.isFinite(Number(item?.lat)) && Number.isFinite(Number(item?.lng))
+        ? findNearestCityCode(Number(item.lat), Number(item.lng))
+        : null;
+      const cityCode = itemCityCode || coordinateCityCode || requestedCityCode;
+      const city = state.config?.cities?.[cityCode];
       if (!city || !Array.isArray(state.hazards)) return '';
 
       const cityName = normalizePlaceName(city.cityName);
