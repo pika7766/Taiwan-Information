@@ -2556,7 +2556,7 @@
             .addTo(layer);
         });
       });
-      layer.bringToFront();
+      layer.eachLayer((marker) => marker.bringToFront());
     }
 
     function renderBikeLayer(payload, cityCode) {
