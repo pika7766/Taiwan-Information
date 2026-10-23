@@ -49,6 +49,14 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
   const tdxPageOffsets = [];
   const tdxPageSizes = [];
   const tdxAuthorizationHeaders = [];
+  const supportedTrafficCities = new Set([
+    'YilanCounty', 'HsinchuCounty', 'ChanghuaCounty', 'YunlinCounty', 'PingtungCounty',
+    'Keelung', 'Taipei', 'Kaohsiung', 'NewTaipei', 'Taichung', 'Tainan', 'Taoyuan'
+  ]);
+  const supportedLiveTrafficCities = new Set([
+    'YilanCounty', 'ChanghuaCounty', 'YunlinCounty', 'PingtungCounty',
+    'Keelung', 'Taipei', 'Taichung', 'Tainan', 'Taoyuan'
+  ]);
   const additionalFarRoads = Array.from({ length: 999 }, (_, index) => ({
     SectionID: `far-section-${index}`,
     RoadName: '測試遠方道路',
@@ -100,6 +108,21 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     let payload = [];
     if (pathname === '/token') {
       payload = { access_token: 'test-tdx-token', expires_in: 3600 };
+    } else if (
+      (pathname.includes('/v2/Road/Traffic/Section/City/')
+        || pathname.includes('/v2/Road/Traffic/SectionShape/City/'))
+      && !supportedTrafficCities.has(city)
+    ) {
+      response.writeHead(400, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ Message: `City '${city}' is not accepted` }));
+      return;
+    } else if (
+      pathname.includes('/v2/Road/Traffic/Live/City/')
+      && !supportedLiveTrafficCities.has(city)
+    ) {
+      response.writeHead(400, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ Message: `City '${city}' is not accepted` }));
+      return;
     } else if (pathname.includes('/v2/Road/Traffic/Section/City/')) {
       payload = city === 'Taipei' ? trafficPayloads.sections
         : city === 'NewTaipei' ? neighboringCityTraffic.sections : [];
@@ -184,6 +207,8 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     assert.equal(traffic.data.roads[0].speed, 18);
     assert.deepEqual(traffic.data.roads[0].lines, [[[25.0336, 121.54], [25.0336, 121.58]]]);
     assert.ok(traffic.data.cities.includes('NewTaipei'));
+    assert.match(output, /\[tdx-traffic\].*"outcome":"(?:success|degraded)"/,
+      'successful traffic requests should be logged in the backend');
     for (const pathName of [
       '/api/basic/v2/Road/Traffic/Section/City/Taipei',
       '/api/basic/v2/Road/Traffic/SectionShape/City/Taipei',
@@ -200,9 +225,15 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     );
     const expandedTraffic = await expandedTrafficResponse.json();
     assert.equal(expandedTrafficResponse.status, 200, output);
-    assert.ok(expandedTraffic.data.roads.some((road) => road.sectionId === 'neighbor-section'),
+    const neighborRoad = expandedTraffic.data.roads.find((road) => road.sectionId === 'neighbor-section');
+    assert.ok(neighborRoad,
       'traffic coverage should include adjacent-city roads beyond the old 30 km cap');
+    assert.equal(neighborRoad.status, 'unknown',
+      'road geometry should remain visible when TDX has no live-traffic feed for that city');
+    assert.ok(expandedTraffic.liveUnavailableCities.includes('NewTaipei'),
+      'cities without TDX live-traffic coverage should be reported');
     assert.ok(tdxPaths.includes('/api/basic/v2/Road/Traffic/SectionShape/City/NewTaipei'));
+    assert.ok(!tdxPaths.includes('/api/basic/v2/Road/Traffic/Live/City/NewTaipei'));
     assert.ok(tdxAuthorizationHeaders.includes('Bearer test-tdx-token'));
     for (const pathName of [
       '/api/basic/v2/Road/Traffic/Section/City/Taipei',
@@ -211,6 +242,13 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     ]) {
       assert.ok(tdxPaths.includes(pathName), `TDX endpoint was not requested: ${pathName}`);
     }
+
+    const failedTrafficResponse = await fetch(
+      `${baseUrl}/api/tdx/traffic?lat=0&lng=0&city=Taipei&radius=1000`
+    );
+    assert.equal(failedTrafficResponse.status, 400);
+    assert.match(output, /\[tdx-traffic\].*"outcome":"failure".*"status":400/,
+      'failed traffic requests should log the status and outcome');
 
     const sessionId = 'b4c02e83-5ec8-4612-b6d1-458bcb1f7985';
     const heartbeat = (body) => fetch(`${baseUrl}/api/presence`, {

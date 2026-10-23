@@ -123,6 +123,19 @@ const TDX_CITY_BY_PORTAL_CODE = {
   Yilan: 'YilanCounty', Hualien: 'HualienCounty', Taitung: 'TaitungCounty', Penghu: 'PenghuCounty',
   Kinmen: 'KinmenCounty', Matsu: 'LienchiangCounty'
 };
+const TDX_TRAFFIC_SECTION_CITIES = new Set([
+  'YilanCounty', 'HsinchuCounty', 'ChanghuaCounty', 'YunlinCounty', 'PingtungCounty',
+  'Keelung', 'Taipei', 'Kaohsiung', 'NewTaipei', 'Taichung', 'Tainan', 'Taoyuan'
+]);
+const TDX_TRAFFIC_LIVE_CITIES = new Set([
+  'YilanCounty', 'ChanghuaCounty', 'YunlinCounty', 'PingtungCounty',
+  'Keelung', 'Taipei', 'Taichung', 'Tainan', 'Taoyuan'
+]);
+const TDX_BIKE_CITIES = new Set([
+  'Taichung', 'Hsinchu', 'MiaoliCounty', 'ChanghuaCounty', 'NewTaipei', 'YunlinCounty',
+  'ChiayiCounty', 'PingtungCounty', 'TaitungCounty', 'Taoyuan', 'Taipei', 'Kaohsiung',
+  'Tainan', 'Chiayi', 'HsinchuCounty'
+]);
 const METRO_SYSTEM_LABELS = {
   TRTC: '臺北捷運', KRTC: '高雄捷運', KLRT: '高雄輕軌', TYMC: '桃園捷運',
   TMRT: '臺中捷運', NTMC: '新北捷運', NTDLRT: '淡海輕軌', NTALRT: '安坑輕軌'
@@ -1627,38 +1640,40 @@ async function refreshNationwideMobilityCaches() {
   const cities = nationwideMobilityCities();
   nationwideMobilityRefreshPromise = (async () => {
     while (nationwideMobilityCityCursor < cities.length && hasRecentTdxDemand() && !isTdxPaused()) {
-      const { portalCityCode, tdxCity } = cities[nationwideMobilityCityCursor];
+      const { tdxCity } = cities[nationwideMobilityCityCursor];
       const parameters = { '$top': 10_000 };
-      const requests = [
-        {
+      const requests = [];
+      if (TDX_TRAFFIC_SECTION_CITIES.has(tdxCity)) {
+        requests.push({
           label: 'road-sections',
           promise: fetchTdxCity('v2/Road/Traffic/Section/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
-        },
-        {
+        }, {
           label: 'road-section-shapes',
           promise: fetchTdxCity('v2/Road/Traffic/SectionShape/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
-        },
-        {
+        });
+      }
+      if (TDX_TRAFFIC_LIVE_CITIES.has(tdxCity)) {
+        requests.push({
           label: 'road-live-traffic',
           promise: fetchTdxCity('v2/Road/Traffic/Live/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
-        },
-        {
+        });
+      }
+      if (TDX_BIKE_CITIES.has(tdxCity)) {
+        requests.push({
           label: 'bike-stations',
           promise: fetchTdxCity('v2/Bike/Station/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
-        },
-        {
+        }, {
           label: 'bike-availability',
           promise: fetchTdxCity('v2/Bike/Availability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
-        },
-        {
-          label: 'parking-lots',
-          promise: fetchTdxCity('v1/Parking/OffStreet/CarPark/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
-        },
-        {
-          label: 'parking-availability',
-          promise: fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
-        }
-      ];
+        });
+      }
+      requests.push({
+        label: 'parking-lots',
+        promise: fetchTdxCity('v1/Parking/OffStreet/CarPark/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
+      }, {
+        label: 'parking-availability',
+        promise: fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
+      });
       const results = await Promise.allSettled(requests.map((request) => request.promise));
       const failed = results.flatMap((result, index) => result.status === 'rejected'
         ? [{ result, request: requests[index] }]
@@ -1673,7 +1688,11 @@ async function refreshNationwideMobilityCaches() {
     if (nationwideMobilityCityCursor >= cities.length) {
       nationwideMobilityCityCursor = 0;
       nationwideMobilityRefreshAt = Date.now();
-      console.log(`Nationwide TDX traffic, YouBike, and parking cache refreshed for ${cities.length} cities`);
+      console.log(
+        `Nationwide TDX mobility cache refresh completed for ${cities.length} city scopes `
+        + `(${TDX_TRAFFIC_SECTION_CITIES.size} road-section, ${TDX_TRAFFIC_LIVE_CITIES.size} live-traffic, `
+        + `${TDX_BIKE_CITIES.size} YouBike-supported cities; parking checked in all scopes)`
+      );
     }
   })().finally(() => {
     nationwideMobilityRefreshPromise = null;
@@ -2477,11 +2496,13 @@ function trafficCityScopes(lat, lng, radiusMeters, preferredCity) {
       center: PORTAL_CONFIG.cities[portalCityCode]?.mapCenter
     }))
     .filter((scope) => (
-      scope.center
+      TDX_TRAFFIC_SECTION_CITIES.has(scope.tdxCity)
+      && scope.center
       && haversineMeters(lat, lng, scope.center[0], scope.center[1]) <= radiusMeters + cityBufferMeters
     ));
   const uniqueScopes = [...new Map(scopes.map((scope) => [scope.tdxCity, scope])).values()];
-  if (!uniqueScopes.some((scope) => scope.tdxCity === preferredCity)) {
+  if (TDX_TRAFFIC_SECTION_CITIES.has(preferredCity)
+    && !uniqueScopes.some((scope) => scope.tdxCity === preferredCity)) {
     uniqueScopes.push({ portalCityCode: null, tdxCity: preferredCity });
   }
   return uniqueScopes;
@@ -2861,6 +2882,7 @@ async function proxyBusStops(requestUrl, response) {
 }
 
 async function fetchBikeCityData(city, origin = null, includeAvailability = true) {
+  if (!TDX_BIKE_CITIES.has(city)) return [];
   const stationsPayload = await fetchTdxCity('v2/Bike/Station/City', city, {
     '$top': 5000
   }, TDX_STATIC_REFRESH_INTERVAL_MS);
@@ -3111,28 +3133,62 @@ async function proxyRoadNetwork(requestUrl, response) {
 }
 
 async function proxyTraffic(requestUrl, response) {
+  const startedAt = Date.now();
+  let preferredCity = requestUrl.searchParams.get('city') || 'unknown';
+  let radiusMeters = null;
+  console.log('[tdx-traffic]', JSON.stringify({
+    outcome: 'request',
+    city: preferredCity,
+    radiusMeters: requestUrl.searchParams.get('radius') || null
+  }));
   try {
     const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    const preferredCity = requireTdxCity(requestUrl.searchParams, lat, lng);
+    preferredCity = requireTdxCity(requestUrl.searchParams, lat, lng);
     const requestedRadius = Number(requestUrl.searchParams.get('radius'));
-    const radiusMeters = Number.isFinite(requestedRadius)
+    radiusMeters = Number.isFinite(requestedRadius)
       ? Math.min(500_000, Math.max(1_000, requestedRadius))
       : 5_000;
     const parameters = { '$top': 10_000 };
     const cityScopes = trafficCityScopes(lat, lng, radiusMeters, preferredCity);
+    if (!cityScopes.length) {
+      const payload = {
+        success: true,
+        degraded: true,
+        message: `TDX 即時路況目前沒有涵蓋 ${preferredCity} 的道路資料`,
+        source: '交通部 TDX 即時路況',
+        observedAt: new Date().toISOString(),
+        refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
+        data: { roads: [], cities: [] }
+      };
+      console.log('[tdx-traffic]', JSON.stringify({
+        outcome: 'degraded',
+        city: preferredCity,
+        radiusMeters,
+        roads: 0,
+        reason: 'no-supported-coverage',
+        elapsedMs: Date.now() - startedAt
+      }));
+      sendJson(response, 200, payload);
+      return;
+    }
     const cityResults = await Promise.all(cityScopes.map(async (scope) => {
+      const liveSupported = TDX_TRAFFIC_LIVE_CITIES.has(scope.tdxCity);
       const [sectionsResult, shapesResult, liveResult] = await Promise.allSettled([
         fetchTdxCity('v2/Road/Traffic/Section/City', scope.tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
         fetchTdxCity('v2/Road/Traffic/SectionShape/City', scope.tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
-        fetchTdxCity('v2/Road/Traffic/Live/City', scope.tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS)
+        liveSupported
+          ? fetchTdxCity('v2/Road/Traffic/Live/City', scope.tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS)
+          : Promise.resolve([])
       ]);
-      const failed = [sectionsResult, shapesResult, liveResult].find((result) => result.status === 'rejected');
+      const failed = [sectionsResult, shapesResult].find((result) => result.status === 'rejected');
       if (failed) return { scope, error: failed.reason };
       return {
         scope,
         sectionsPayload: sectionsResult.value,
         shapesPayload: shapesResult.value,
-        livePayload: liveResult.value
+        livePayload: liveResult.status === 'fulfilled' ? liveResult.value : [],
+        liveError: liveResult.status === 'rejected' ? liveResult.reason : null,
+        liveSupported
       };
     }));
     const availableResults = cityResults.filter((result) => !result.error);
@@ -3144,7 +3200,13 @@ async function proxyTraffic(requestUrl, response) {
     const unavailableCities = cityResults.filter((result) => result.error).map((result) => result.scope.tdxCity);
     unavailableCities.forEach((city) => {
       const result = cityResults.find((item) => item.scope.tdxCity === city);
-      console.error(`TDX traffic coverage unavailable for ${city}:`, tdxFailureDescription(result.error));
+      console.error(`[tdx-traffic-source] failure city=${city} source=road-sections-or-shapes:`, tdxFailureDescription(result.error));
+    });
+    const liveUnavailableCities = cityResults
+      .filter((result) => !result.error && (!result.liveSupported || result.liveError))
+      .map((result) => result.scope.tdxCity);
+    cityResults.filter((result) => !result.error && result.liveError).forEach((result) => {
+      console.error(`[tdx-traffic-source] failure city=${result.scope.tdxCity} source=live-traffic:`, tdxFailureDescription(result.liveError));
     });
     const roads = cityResults.flatMap((result) => {
       if (result.error) return [];
@@ -3169,23 +3231,44 @@ async function proxyTraffic(requestUrl, response) {
           congestionLevel: live.CongestionLevel ?? null,
           status: status.key,
           statusLabel: status.label,
-          updateTime: live.DataCollectTime || result.livePayload.UpdateTime || null
+          updateTime: live.DataCollectTime || result.livePayload?.UpdateTime || null
         };
       }).filter(Boolean);
     });
+    const degraded = unavailableCities.length > 0 || liveUnavailableCities.length > 0;
+    const messageParts = [];
+    if (unavailableCities.length) messageParts.push(`部分縣市道路資料暫時無法取得：${unavailableCities.join('、')}`);
+    if (liveUnavailableCities.length) messageParts.push(`部分縣市沒有 TDX 即時路況資料：${liveUnavailableCities.join('、')}`);
+    console.log('[tdx-traffic]', JSON.stringify({
+      outcome: degraded ? 'degraded' : 'success',
+      city: preferredCity,
+      cities: cityScopes.map((scope) => scope.tdxCity),
+      roads: roads.length,
+      unavailableCities,
+      liveUnavailableCities,
+      radiusMeters,
+      elapsedMs: Date.now() - startedAt
+    }));
     sendJson(response, 200, {
       success: true,
-      degraded: unavailableCities.length > 0,
+      degraded,
       unavailableCities,
-      message: unavailableCities.length
-        ? `部分縣市即時路況暫時無法取得：${unavailableCities.join('、')}`
-        : null,
+      liveUnavailableCities,
+      message: messageParts.length ? messageParts.join('；') : null,
       source: '交通部 TDX 道路路段、路段線形與即時路況',
       observedAt: new Date().toISOString(),
       refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
       data: { roads, cities: cityScopes.map((scope) => scope.tdxCity) }
     });
   } catch (error) {
+    console.error('[tdx-traffic]', JSON.stringify({
+      outcome: 'failure',
+      city: preferredCity,
+      radiusMeters,
+      status: error instanceof UpstreamError ? error.status : 500,
+      error: tdxFailureDescription(error),
+      elapsedMs: Date.now() - startedAt
+    }));
     sendApiError(response, error);
   }
 }
