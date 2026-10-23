@@ -50,7 +50,9 @@
 - 串接中央氣象署開放資料，顯示所在地天氣資訊。
 - 整合政府資料開放平臺，可依縣市、行政區與生活分類查詢資料集。
 - 提供安全、防災及地方生活資訊。
-- 服務選單集中顯示永久保存的系統公告與中央氣象署緊急資訊，包含地震、颱風海陸警報、龍捲風、土石流與淹水警報，並可收合或展開完整歷史。
+- 服務選單顯示系統公告，以及目前影響超過三個縣市的中央氣象署災害資訊；地震不列入此全臺災情彙整。地圖以縣市代表點標出有效警報，點擊可查看詳情；代表點不等於精確警戒邊界。
+- 地方深度報導只列出點擊縣市／行政區的氣象警報；地震僅列出該地區震度達 3 級以上的報告。
+- 公車路線查找會比對起訖地區與目前災情，提示可能的道路封閉、積淹水或交通延誤；受影響縣市的停車場與 YouBike 詳情會顯示災害造成暫停開放的可能性。
 - 內建 15 類、60 個常用網站連結，涵蓋政府服務、交通、新聞、購物、學習、求職、社群及 AI 工具。
 
 ### 手機與操作體驗
@@ -60,7 +62,7 @@
 - 頁首提供附實際操作圖片的使用教學，涵蓋定位搜尋、交通圖層、公車路線與地方服務。
 - 互動控制提供焦點樣式、ARIA 標籤與鍵盤關閉操作。
 - 大量 YouBike 與停車場站點使用 Marker Cluster，交通資料依地圖視窗範圍載入。
-- Android 與 iOS App 透過 FCM Topic 接收新系統公告及 CWA 緊急資訊，背景或關閉畫面時由作業系統顯示原生通知；一般網頁只顯示資訊，不要求或發送系統通知。
+- Android App 首次啟動會要求通知與定位權限；氣象災害通知依裝置目前定位縣市訂閱專屬 FCM Topic，非該縣市的警報不會推送給該裝置。一般網頁只顯示資訊，不要求或發送系統通知。
 
 ## 使用技術
 
@@ -74,6 +76,7 @@
 | 政府資料 | 政府資料開放平臺 API |
 | 地理編碼 | OpenStreetMap Nominatim |
 | 部署 | Render Web Service、GitHub 自動部署 |
+| 行動 App | Android Capacitor；iOS 專案已移除 |
 | 儲存 | 記憶體快取、JSON 磁碟快照、Render Persistent Disk（選用） |
 
 ## 運作方式
@@ -87,6 +90,7 @@
 7. TDX 採單一憑證 + FIFO 隊列模式；憑證遇到 `429` 限流時，伺服器進入暫停機制，期間回傳伺服器快取資料降級服務，冷卻後自動恢復。
 8. 外部服務失敗時保留既有快取，讓地圖與其他功能仍可繼續使用。
 9. 伺服器每分鐘集中取得全臺 CWA 緊急資訊，以穩定雜湊 ID 去重後寫入內容檔；使用者裝置只讀本站 API。
+10. 同一輪 CWA 更新會建立目前有效的非地震災害快照，`/api/hazards` 可依座標解析縣市並回傳該縣市警報；Android 裝置依定位訂閱該縣市 FCM Topic。停班停課資料目前沒有已設定的官方 API 來源，畫面會提醒以各縣市政府公告為準。
 
 TDX 官方 Swagger 顯示，市區公車、YouBike、縣市停車場只提供 `City/{City}` 端點，沒有全臺單一請求端點。系統因此採用「每縣市一次取得完整資料、伺服器共享快取」；同一縣市不會因使用者數量或地圖移動重複請求。若固定掃描 22 縣市，單次週期反而會產生上百次 TDX 請求，因此不採用全臺強制預抓。全臺公車動態則維持既有的伺服器彙整快照。
 
@@ -105,7 +109,7 @@ Google 地圖與 Apple 地圖連結會帶入解析後的起點與終點；真正
 - Render 免費方案可能會休眠，服務重新喚醒時第一個請求需要較長時間。
 - 未掛載 Persistent Disk 時，Render 重新部署或重建執行個體後會重新建立公車快照與旅運路線圖。
 - 瀏覽器定位及系統分享功能需要 HTTPS、瀏覽器支援與使用者授權。
-- 推播後端只呼叫 FCM HTTP v1 API。iOS 的 FCM 最終仍由 Firebase 經 Apple 推播通道送達，因此 Firebase Console 必須設定 APNs Auth Key；專案伺服器不會直接呼叫 APNs。
+- 推播後端只呼叫 FCM HTTP v1 API。Android 的災害 Topic 依縣市分流；需在 Firebase Console 設定 Android App，伺服器端另需 Firebase 服務帳戶。
 
 ## 本機執行
 
@@ -158,7 +162,7 @@ Google 地圖與 Apple 地圖連結會帶入解析後的起點與終點；真正
 
 Render 會自動提供 `PORT`，伺服器已監聽 `0.0.0.0`，不需要手動指定連接埠。若使用 Render Persistent Disk，建議掛載至 `/var/data`，並設定 `BUS_REALTIME_CACHE_FILE=/var/data/bus_realtime_cache.json`、`JOURNEY_GRAPH_CACHE_FILE=/var/data/journey_graph_cache.json` 及 `PORTAL_CONTENT_FILE=/var/data/portal-content.json`。公告、公告順序與三個管理員資料開關要在重新部署後仍保留，必須設定 `PORTAL_CONTENT_FILE` 並掛載 Persistent Disk。
 
-FCM 建議在 Render 的 **Secret Files** 新增 Firebase 服務帳戶 JSON，檔名使用 `firebase-service-account.json`，再設定 `FCM_SERVICE_ACCOUNT_FILE=/etc/secrets/firebase-service-account.json`。Android 的 `google-services.json` 與 iOS 的 `GoogleService-Info.plist` 是 App 端設定，不能拿來取代伺服器服務帳戶，也不要填進 Render 環境變數。
+FCM 建議在 Render 的 **Secret Files** 新增 Firebase 服務帳戶 JSON，檔名使用 `firebase-service-account.json`，再設定 `FCM_SERVICE_ACCOUNT_FILE=/etc/secrets/firebase-service-account.json`。Android 的 `google-services.json` 是 App 端設定，不能拿來取代伺服器服務帳戶，也不要填進 Render 環境變數。
 
 需在 Render 的 Environment 頁面分別新增以下 Key；Value 填入各組實際帳號與密鑰：
 

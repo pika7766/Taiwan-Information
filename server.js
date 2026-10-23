@@ -328,6 +328,8 @@ let portalContent = loadPortalContent();
 let portalContentPersistQueue = Promise.resolve();
 let cwaEmergencyRefreshTimer = null;
 let cwaEmergencyRefreshPromise = null;
+let activeCwaHazards = [];
+let activeCwaHazardsObservedAt = null;
 const defaultServiceSettings = {
   tdxFetchingEnabled: !/^(?:0|false|off)$/i.test(process.env.TDX_FETCH_ENABLED || 'true'),
   cwaFetchingEnabled: !/^(?:0|false|off)$/i.test(process.env.CWA_FETCH_ENABLED || 'true'),
@@ -722,6 +724,10 @@ async function handleAdminCwaSetting(request, response) {
       syncServiceSettingsToPortalContent();
       throw error;
     }
+    if (!cwaFetchingEnabled) {
+      activeCwaHazards = [];
+      activeCwaHazardsObservedAt = new Date().toISOString();
+    }
     sendJson(response, 200, adminStatusPayload());
     if (cwaFetchingEnabled) {
       refreshCwaEmergencyInformation().catch((error) => {
@@ -869,13 +875,13 @@ async function fcmOAuthAccessToken(forceRefresh = false) {
   return fcmAccessToken.token;
 }
 
-function fcmMessageFor(item, type) {
+function fcmMessageFor(item, type, topic = FCM_TOPIC) {
   const emergency = type === 'emergency';
   const title = String(item?.title || (emergency ? '緊急即時資訊' : '新的系統公告')).slice(0, 200);
   const body = String(item?.summary || item?.details || '請開啟台灣智慧生活查看完整內容').slice(0, 500);
   return {
     message: {
-      topic: FCM_TOPIC,
+      topic,
       notification: { title, body },
       data: {
         type,
@@ -901,7 +907,7 @@ function fcmMessageFor(item, type) {
   };
 }
 
-async function sendFcmTopicNotification(item, type, retryAuthentication = true) {
+async function sendFcmTopicNotification(item, type, topic = FCM_TOPIC, retryAuthentication = true) {
   if (!fcmIsConfigured()) return { sent: false, skipped: true };
   const accessToken = await fcmOAuthAccessToken();
   try {
@@ -914,7 +920,7 @@ async function sendFcmTopicNotification(item, type, retryAuthentication = true) 
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(fcmMessageFor(item, type))
+        body: JSON.stringify(fcmMessageFor(item, type, topic))
       },
       20_000
     );
@@ -923,19 +929,20 @@ async function sendFcmTopicNotification(item, type, retryAuthentication = true) 
     if (retryAuthentication && error.status === 401) {
       fcmAccessToken = null;
       await fcmOAuthAccessToken(true);
-      return sendFcmTopicNotification(item, type, false);
+      return sendFcmTopicNotification(item, type, topic, false);
     }
     throw error;
   }
 }
 
-function queuePortalNotification(item, type) {
+function queuePortalNotification(item, type, topic = FCM_TOPIC) {
   const queuedAt = new Date().toISOString();
   portalNotificationQueue = portalNotificationQueue.catch(() => undefined)
-    .then(() => sendFcmTopicNotification(item, type))
+    .then(() => sendFcmTopicNotification(item, type, topic))
     .then((result) => {
       lastFcmNotification = {
         type,
+        topic,
         itemId: String(item?.id || ''),
         queuedAt,
         completedAt: new Date().toISOString(),
@@ -950,6 +957,7 @@ function queuePortalNotification(item, type) {
       console.error(`FCM ${type} notification failed:`, error.message);
       lastFcmNotification = {
         type,
+        topic,
         itemId: String(item?.id || ''),
         queuedAt,
         completedAt: new Date().toISOString(),
@@ -1096,9 +1104,131 @@ function handlePortalInformation(response) {
     emergencyObservedAt: portalContent.emergencyObservedAt,
     data: {
       announcements: portalContent.announcements,
-      emergencies: portalContent.emergencies
+      emergencies: buildGlobalDisasterNotices(activeCwaHazards),
+      hazards: activeCwaHazards,
+      hazardsObservedAt: activeCwaHazardsObservedAt
     }
   });
+}
+
+function portalCityCodeByName(value = '') {
+  const cityName = canonicalTaiwanCityName(value);
+  return Object.entries(PORTAL_CONFIG.cities || {}).find(([, config]) => (
+    canonicalTaiwanCityName(config.cityName) === cityName
+  ))?.[0] || null;
+}
+
+function disasterTopicForCity(cityCode) {
+  return `taiwan-disaster-${String(cityCode || '').toLowerCase()}`;
+}
+
+function extractAffectedCityNames(areas, details = '') {
+  const areaText = normalizePlaceName(asArray(areas).join(' '));
+  const detailText = normalizePlaceName(details);
+  if (/全臺|全台|臺灣各地|台灣各地|全國各地/.test(areaText)) {
+    return Object.values(PORTAL_CONFIG.cities || {}).map((city) => city.cityName);
+  }
+  const normalizedAreas = areaText.replace(/\s+/g, '');
+  const affectedCities = OFFICIAL_TAIWAN_CITY_NAMES.filter((city) => normalizedAreas.includes(city));
+  if (affectedCities.length) return [...new Set(affectedCities)];
+  if (/全臺|全台|臺灣各地|台灣各地|全國各地/.test(detailText)) {
+    return Object.values(PORTAL_CONFIG.cities || {}).map((city) => city.cityName);
+  }
+  const normalizedDetails = detailText.replace(/\s+/g, '');
+  return [...new Set(OFFICIAL_TAIWAN_CITY_NAMES.filter((city) => normalizedDetails.includes(city)))];
+}
+
+function buildGlobalDisasterNotices(alerts) {
+  const groups = new Map();
+  alerts.forEach((alert) => {
+    const cityNames = alert.affectedCities || extractAffectedCityNames(alert.affectedAreas, alert.details);
+    if (cityNames.length <= 3) return;
+    const typhoonText = `${alert.title} ${alert.details}`;
+    const typhoonName = alert.category === '颱風警報'
+      ? typhoonText.match(/([\u4e00-\u9fff]{1,4})颱風/)?.[1]
+        || typhoonText.match(/颱風名稱[：:\s]*([\u4e00-\u9fff]{1,4})/)?.[1]
+      : null;
+    const groupKey = typhoonName ? `typhoon:${typhoonName}` : `${alert.category}:${alert.title}`;
+    const group = groups.get(groupKey) || {
+      ids: [], category: alert.category, title: typhoonName
+        ? `${typhoonName}颱風即時通知`
+        : `${alert.title || alert.category}即時通知`,
+      conditions: [], affectedAreas: new Set(), issuedAt: alert.issuedAt || null,
+      source: alert.source || '中央氣象署'
+    };
+    group.ids.push(alert.id);
+    const condition = [
+      `情況：${alert.title || alert.category}`,
+      alert.details || alert.summary,
+      `影響縣市：${cityNames.join('、')}`
+    ].filter(Boolean).join('\n');
+    if (!group.conditions.includes(condition)) group.conditions.push(condition);
+    cityNames.forEach((city) => group.affectedAreas.add(city));
+    if (!group.issuedAt || Date.parse(alert.issuedAt || 0) > Date.parse(group.issuedAt || 0)) {
+      group.issuedAt = alert.issuedAt || group.issuedAt;
+    }
+    groups.set(groupKey, group);
+  });
+  return [...groups.values()].map((group) => {
+    const affectedAreas = [...group.affectedAreas];
+    return {
+      id: crypto.createHash('sha256').update(group.ids.sort().join('|')).digest('hex'),
+      category: group.category,
+      title: group.title,
+      summary: `${affectedAreas.length} 個縣市受影響：${affectedAreas.join('、')}`,
+      details: `${group.conditions.join('\n\n')}\n\n停班停課資訊如無官方資料，請以各縣市政府公布為主。`,
+      affectedAreas,
+      issuedAt: group.issuedAt,
+      source: group.source
+    };
+  });
+}
+
+function portalCityCodeForCoordinates(lat, lng) {
+  let nearestCityCode = null;
+  let shortestDistance = Infinity;
+  Object.entries(PORTAL_CONFIG.cities || {}).forEach(([cityCode, config]) => {
+    if (!Array.isArray(config.mapCenter)) return;
+    const distance = haversineMeters(lat, lng, Number(config.mapCenter[0]), Number(config.mapCenter[1]));
+    if (distance < shortestDistance) {
+      nearestCityCode = cityCode;
+      shortestDistance = distance;
+    }
+  });
+  return nearestCityCode;
+}
+
+function handleDisasterAlerts(requestUrl, response) {
+  try {
+    const hasLatitude = requestUrl.searchParams.has('lat');
+    const hasLongitude = requestUrl.searchParams.has('lng');
+    if (hasLatitude !== hasLongitude) {
+      throw new UpstreamError('lat and lng must be provided together', 400);
+    }
+    let cityCode = null;
+    let cityName = null;
+    if (hasLatitude) {
+      const coordinates = requireTaiwanCoordinates(requestUrl.searchParams);
+      cityCode = portalCityCodeForCoordinates(coordinates.lat, coordinates.lng);
+      cityName = PORTAL_CONFIG.cities[cityCode]?.cityName || null;
+    }
+    const alerts = cwaFetchingEnabled
+      ? activeCwaHazards.filter((alert) => !cityName
+        || (alert.affectedCities || []).includes(cityName))
+      : [];
+    sendJson(response, 200, {
+      success: true,
+      observedAt: activeCwaHazardsObservedAt || new Date().toISOString(),
+      data: {
+        alerts,
+        cityCode,
+        cityName,
+        topic: cityCode ? disasterTopicForCity(cityCode) : null
+      }
+    });
+  } catch (error) {
+    sendApiError(response, error);
+  }
 }
 
 function loadGraphHopperApiKeys() {
@@ -1547,6 +1677,7 @@ function normalizeCwaEmergency(datasetId, record) {
   const locations = asArray(firstHazard?.info?.affectedAreas, ['location', 'Location'])
     .map((location) => localizedText(location?.locationName || location?.LocationName || location))
     .filter(Boolean);
+  const affectedCities = extractAffectedCityNames(locations, `${localizedText(phenomena)} ${details}`);
   const officialId = record?.identifier || record?.Identifier || record?.id || record?.ID || '';
   const stableKey = [datasetId, officialId, issuedAt, title, officialId || details];
   return {
@@ -1555,6 +1686,7 @@ function normalizeCwaEmergency(datasetId, record) {
     summary: String(details || `${title}，請留意中央氣象署最新資訊`).slice(0, 500),
     details,
     affectedAreas: [...new Set(locations)].slice(0, 100),
+    affectedCities,
     issuedAt,
     source: '中央氣象署',
     sourceDatasetId: datasetId,
@@ -1579,6 +1711,21 @@ async function refreshCwaEmergencyInformation() {
       const firstFailure = results.find((result) => result.status === 'rejected');
       throw firstFailure?.reason || new UpstreamError('中央氣象署緊急資訊目前無法讀取', 502);
     }
+    const hazardResults = results.filter((result, index) => (
+      result.status === 'fulfilled' && !/E-A0015/i.test(CWA_EMERGENCY_DATASET_IDS[index])
+    ));
+    if (hazardResults.length) {
+      const currentHazards = hazardResults.flatMap((result) => result.value)
+        .filter((item) => item.category !== '地震')
+        .map((item) => ({
+          ...item,
+          affectedCities: item.affectedCities?.length
+            ? item.affectedCities
+            : extractAffectedCityNames(item.affectedAreas, item.details)
+        }));
+      activeCwaHazards = [...new Map(currentHazards.map((item) => [item.id, item])).values()];
+      activeCwaHazardsObservedAt = new Date().toISOString();
+    }
     const existingIds = new Set(portalContent.emergencies.map((item) => item.id));
     const additions = [];
     fulfilled.flatMap((result) => result.value).forEach((item) => {
@@ -1594,7 +1741,13 @@ async function refreshCwaEmergencyInformation() {
     }
     portalContent.emergencyObservedAt = new Date().toISOString();
     await persistPortalContent();
-    additions.forEach((item) => queuePortalNotification(item, 'emergency'));
+    additions.filter((item) => item.category !== '地震').forEach((item) => {
+      const alert = activeCwaHazards.find((candidate) => candidate.id === item.id);
+      [...new Set(alert?.affectedCities || [])].forEach((cityName) => {
+        const cityCode = portalCityCodeByName(cityName);
+        if (cityCode) queuePortalNotification(item, 'emergency', disasterTopicForCity(cityCode));
+      });
+    });
     results.filter((result) => result.status === 'rejected').forEach((result) => {
       console.warn('One CWA emergency dataset could not be refreshed:', result.reason?.message || result.reason);
     });
@@ -1887,10 +2040,38 @@ async function fetchOverpassQuery(query, timeoutMs = 35_000) {
   throw lastError;
 }
 
+function earthquakeIntensityForLocation(record, city, district) {
+  const matches = [];
+  const visit = (value, depth = 0) => {
+    if (!value || typeof value !== 'object' || depth > 10) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => visit(item, depth + 1));
+      return;
+    }
+    const areaName = localizedText(value.AreaDesc || value.areaDesc || value.CountyName
+      || value.countyName || value.LocationName || value.locationName || value.AreaName || value.areaName);
+    const intensityValue = value.AreaIntensity ?? value.areaIntensity ?? value.MaxIntensity
+      ?? value.maxIntensity ?? value.IntensityLevel ?? value.intensityLevel
+      ?? (typeof value.Intensity === 'string' || typeof value.Intensity === 'number' ? value.Intensity : null)
+      ?? (typeof value.intensity === 'string' || typeof value.intensity === 'number' ? value.intensity : null);
+    const intensityMatch = String(intensityValue ?? '').match(/[0-9]+/);
+    const intensity = intensityMatch ? Number(intensityMatch[0]) : NaN;
+    if (areaName && Number.isFinite(intensity) && intensity >= 3
+      && normalizePlaceName(areaName).includes(normalizePlaceName(city))
+      && (!district || normalizePlaceName(areaName).includes(normalizePlaceName(district)))) {
+      matches.push({ areaName, intensity });
+    }
+    Object.values(value).forEach((item) => visit(item, depth + 1));
+  };
+  visit(record);
+  return matches.sort((left, right) => right.intensity - left.intensity)[0] || null;
+}
+
 async function proxySafetyInformation(requestUrl, response) {
   try {
     const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
     const city = normalizePlaceName(requestUrl.searchParams.get('city'));
+    const district = normalizePlaceName(requestUrl.searchParams.get('district'));
     const cwaEnabledForRequest = cwaFetchingEnabled;
     const authorization = cwaEnabledForRequest ? requiredEnvironment('CWA_API_KEY') : null;
     const fetchCwaDataset = (datasetId) => {
@@ -1905,29 +2086,39 @@ async function proxySafetyInformation(requestUrl, response) {
       fetchOverpassQuery(shelterQuery, 7_000)
     ]);
     const warningRecords = warningResult.status === 'fulfilled'
-      ? asArray(warningResult.value.records, ['record', 'Record', 'location'])
+      ? cwaEmergencyRecords('W-C0033-001', warningResult.value)
+        .map((record) => normalizeCwaEmergency('W-C0033-001', record))
       : [];
-    const warnings = warningRecords.map((record) => {
-      const serialized = JSON.stringify(record);
-      const phenomena = record.hazardConditions?.hazards?.hazard?.[0]?.info?.phenomena
-        || record.datasetInfo?.datasetDescription || record.phenomena || '';
-      const description = record.contents?.content?.contentText || record.contentText || record.description || phenomena;
-      return {
-        title: localizedText(phenomena) || String(phenomena || '氣象警特報'),
-        description: localizedText(description) || String(description || ''),
-        issuedAt: record.datasetInfo?.issueTime || record.issueTime || null,
-        rawIncludesCity: !city || normalizePlaceName(serialized).includes(city)
-      };
-    }).filter((warning) => warning.rawIncludesCity).map(({ rawIncludesCity, ...warning }) => warning);
+    const warnings = warningRecords.filter((warning) => {
+      const areaText = normalizePlaceName((warning.affectedAreas || []).join(' '));
+      const cityAffected = !city || (warning.affectedCities || []).some((affectedCity) => (
+        canonicalTaiwanCityName(affectedCity) === canonicalTaiwanCityName(city)
+      ));
+      const districtAffected = !district || !areaText || areaText.includes(district)
+        || !(warning.affectedAreas || []).some((area) => /區|鄉|鎮/.test(area));
+      return cityAffected && districtAffected;
+    }).map((warning) => ({
+      title: warning.title,
+      description: warning.details || warning.summary,
+      issuedAt: warning.issuedAt,
+      category: warning.category,
+      affectedAreas: warning.affectedAreas
+    }));
     const earthquakeRecords = earthquakeResult.status === 'fulfilled'
       ? asArray(earthquakeResult.value.records, ['Earthquake', 'earthquake'])
       : [];
-    const earthquakes = earthquakeRecords.slice(0, 5).map((item) => ({
-      report: item.ReportContent || item.reportContent || '中央氣象署地震報告',
-      originTime: item.EarthquakeInfo?.OriginTime || item.earthquakeInfo?.originTime || null,
-      location: item.EarthquakeInfo?.Epicenter?.Location || item.earthquakeInfo?.epicenter?.location || '',
-      magnitude: Number(item.EarthquakeInfo?.EarthquakeMagnitude?.MagnitudeValue ?? item.earthquakeInfo?.earthquakeMagnitude?.magnitudeValue) || null
-    }));
+    const earthquakes = city ? earthquakeRecords.flatMap((item) => {
+      const affectedArea = earthquakeIntensityForLocation(item, city, district);
+      if (!affectedArea) return [];
+      return [{
+        report: item.ReportContent || item.reportContent || '中央氣象署地震報告',
+        originTime: item.EarthquakeInfo?.OriginTime || item.earthquakeInfo?.originTime || null,
+        location: item.EarthquakeInfo?.Epicenter?.Location || item.earthquakeInfo?.epicenter?.location || '',
+        magnitude: Number(item.EarthquakeInfo?.EarthquakeMagnitude?.MagnitudeValue ?? item.earthquakeInfo?.earthquakeMagnitude?.magnitudeValue) || null,
+        intensity: affectedArea.intensity,
+        affectedArea: affectedArea.areaName
+      }];
+    }).slice(0, 5) : [];
     const shelters = shelterResult.status === 'fulfilled'
       ? asArray(shelterResult.value, ['elements']).map((item) => ({
         id: item.id,
@@ -6434,6 +6625,10 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === 'GET' && requestUrl.pathname === '/api/information') {
     handlePortalInformation(response);
+    return;
+  }
+  if (request.method === 'GET' && requestUrl.pathname === '/api/hazards') {
+    handleDisasterAlerts(requestUrl, response);
     return;
   }
   if (request.method === 'GET' && requestUrl.pathname === '/api/geocode/reverse') {

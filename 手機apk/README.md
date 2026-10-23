@@ -28,7 +28,7 @@ npm.cmd run build:debug
 2. 下載 `google-services.json`，放到 `android/app/google-services.json`。
 3. 執行 `npm.cmd run build:debug` 重新產生 APK。
 
-`google-services.json` 已被 Git 忽略。沒有此檔案時 App 仍可建置及使用其他功能，但不會取得 FCM token，也無法收到系統公告或緊急資訊推播。App 取得通知權限後會自動訂閱伺服器 `/api/information` 提供的 FCM Topic。
+`google-services.json` 已被 Git 忽略。沒有此檔案時 App 仍可建置及使用其他功能，但不會取得 FCM token，也無法收到系統公告或緊急資訊推播。App 取得通知權限後會訂閱系統公告 Topic，並依定位縣市訂閱 `/api/hazards` 回傳的災害 Topic。
 
 ## 發布 Google Play
 
@@ -41,3 +41,4 @@ npm.cmd run build:debug
 - 後端位置在 `www/mobile-config.js`，來源範本由 `scripts/sync-web.mjs` 產生。
 - 原生定位、分享、FCM 通知、外部導航、鍵盤、狀態列與返回鍵位於 `src/mobile-runtime.js`。
 - 更新網頁版功能後，執行 `npm.cmd run prepare:native` 即可重新複製至 Android 工程。
+- 首次啟動會依序要求通知及定位權限。災害警報依目前 GPS 定位縣市訂閱縣市專屬 FCM Topic；App 開啟時亦每分鐘確認該縣市的有效警報。定位權限未授予、定位服務關閉或網路不可用時，無法保證收到定位區域災害通知。

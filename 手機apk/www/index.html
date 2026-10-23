@@ -1021,6 +1021,12 @@
       transportHasInitialized: false,
       loadedTransportCityCode: null,
       trafficRenderer: null,
+      disasterAlertLayer: null,
+      hazards: [],
+      lastBikePayload: null,
+      lastBikeDatasetKey: null,
+      lastParkingPayload: null,
+      lastParkingDatasetKey: null,
       lastTrafficRoads: [],
       mapClickSequence: 0,
       mapClickSuppressedUntil: 0,
@@ -1318,6 +1324,7 @@
         })
       };
       state.trafficRenderer = L.canvas({ padding: 0.5 });
+      state.disasterAlertLayer = L.layerGroup().addTo(state.map);
       state.savedPlaceLayer = L.layerGroup().addTo(state.map);
       state.busRouteLayer = L.layerGroup().addTo(state.map);
       state.journeyTrackingLayer = L.layerGroup().addTo(state.map);
@@ -1449,6 +1456,7 @@
         state.selectedCityCode = config.cities[config.defaultCity]
           ? config.defaultCity
           : Object.keys(config.cities)[0];
+        renderDisasterAlertLayer();
         elements.appTitle.textContent = config.appName || '台灣智慧生活';
         document.title = config.appName || '台灣智慧生活';
         renderCityOptions();
@@ -2240,7 +2248,8 @@
       elements.infoKicker.textContent = 'YouBike 站點資訊';
       elements.infoTitle.textContent = station.stationName;
       const wrapper = document.createElement('div');
-      wrapper.innerHTML = `<div class="grid grid-cols-2 gap-3"><div class="rounded-md bg-sky-50 p-4"><span class="block text-xs text-slate-500">可借車輛</span><strong class="text-2xl text-sky-800">${Number.isFinite(station.availableRentBikes) ? station.availableRentBikes : '-'}</strong></div><div class="rounded-md bg-emerald-50 p-4"><span class="block text-xs text-slate-500">可還空位</span><strong class="text-2xl text-emerald-800">${Number.isFinite(station.availableReturnBikes) ? station.availableReturnBikes : '-'}</strong></div></div><div class="mt-4 flex gap-2"><button type="button" class="share-bike rounded-md border border-slate-300 px-3 py-2 text-xs font-bold">分享站點</button></div>`;
+      const cityCode = findNearestCityCode(station.lat, station.lng);
+      wrapper.innerHTML = `<div class="grid grid-cols-2 gap-3"><div class="rounded-md bg-sky-50 p-4"><span class="block text-xs text-slate-500">可借車輛</span><strong class="text-2xl text-sky-800">${Number.isFinite(station.availableRentBikes) ? station.availableRentBikes : '-'}</strong></div><div class="rounded-md bg-emerald-50 p-4"><span class="block text-xs text-slate-500">可還空位</span><strong class="text-2xl text-emerald-800">${Number.isFinite(station.availableReturnBikes) ? station.availableReturnBikes : '-'}</strong></div></div>${stationDisasterWarning('U-Bike站', station, cityCode)}<div class="mt-4 flex gap-2"><button type="button" class="share-bike rounded-md border border-slate-300 px-3 py-2 text-xs font-bold">分享站點</button></div>`;
       wrapper.querySelector('.share-bike').addEventListener('click', shareCurrentMap);
       elements.infoContent.replaceChildren(wrapper);
     }
@@ -2385,8 +2394,24 @@
         if (!response.ok || !payload.success) throw new Error(payload.message || `HTTP ${response.status}`);
         state.announcements = Array.isArray(payload.data?.announcements) ? payload.data.announcements : [];
         state.emergencies = Array.isArray(payload.data?.emergencies) ? payload.data.emergencies : [];
+        const hazards = Array.isArray(payload.data?.hazards) ? payload.data.hazards : [];
+        const hazardsSignature = hazards.map((alert) => (
+          `${alert.id}:${alert.affectedCities?.join(',') || ''}:${alert.details || ''}`
+        )).join('|');
+        const hazardsChanged = hazardsSignature !== state.hazardsSignature;
+        state.hazards = hazards;
+        state.hazardsSignature = hazardsSignature;
         state.publicCwaFetchingEnabled = payload.cwaFetchingEnabled === true;
         renderPortalInformation(payload.cwaFetchingEnabled);
+        if (hazardsChanged) {
+          renderDisasterAlertLayer();
+          if (state.lastBikePayload && state.lastBikeDatasetKey) {
+            renderBikeLayer(state.lastBikePayload, state.lastBikeDatasetKey);
+          }
+          if (state.lastParkingPayload && state.lastParkingDatasetKey) {
+            renderParkingLayer(state.lastParkingPayload, state.lastParkingDatasetKey);
+          }
+        }
       } catch (error) {
         console.error('公告與緊急資訊讀取失敗：', error);
         if (!state.announcements.length) elements.announcementsStatus.textContent = '系統公告目前無法讀取';
@@ -2496,6 +2521,8 @@
     function renderBikeLayer(payload, cityCode) {
       const layer = state.transportLayers?.bike;
       if (!layer) return;
+      state.lastBikePayload = payload;
+      state.lastBikeDatasetKey = cityCode;
       layer.clearLayers();
       const markers = [];
       (payload.data || []).forEach((station) => {
@@ -2510,7 +2537,8 @@
           <p>可借車輛：${Number.isFinite(station.availableRentBikes) ? `${station.availableRentBikes} 輛` : '未提供即時資料'}</p>
           <p>可還空位：${Number.isFinite(station.availableReturnBikes) ? `${station.availableReturnBikes} 格` : '未提供即時資料'}</p>
           <p>站點狀況：${serviceStatus}</p>
-          <p>更新時間：${escapeHtml(formatOfficialTime(station.updateTime))}</p></div>`;
+          <p>更新時間：${escapeHtml(formatOfficialTime(station.updateTime))}</p>
+          ${stationDisasterWarning('U-Bike站', station, cityCode)}</div>`;
         markers.push(L.marker([station.lat, station.lng], { icon, bubblingMouseEvents: false, zIndexOffset: 450 })
           .bindPopup(popup)
           .on('click', () => showBikeDetails(station)));
@@ -2522,6 +2550,8 @@
     function renderParkingLayer(payload, cityCode) {
       const layer = state.transportLayers?.parking;
       if (!layer) return;
+      state.lastParkingPayload = payload;
+      state.lastParkingDatasetKey = cityCode;
       layer.clearLayers();
       const markers = [];
       (payload.data || []).forEach((parkingLot) => {
@@ -2553,7 +2583,8 @@
           ${parkingLot.telephone ? `<p>電話：${escapeHtml(parkingLot.telephone)}</p>` : ''}
           ${parkingLot.serviceTime ? `<p>服務時間：${escapeHtml(parkingLot.serviceTime)}</p>` : ''}
           ${parkingLot.fareDescription ? `<p>費率：${escapeHtml(parkingLot.fareDescription)}</p>` : ''}
-          <p>更新時間：${escapeHtml(formatOfficialTime(parkingLot.updateTime))}</p></div>`;
+          <p>更新時間：${escapeHtml(formatOfficialTime(parkingLot.updateTime))}</p>
+          ${stationDisasterWarning('停車場', parkingLot, cityCode)}</div>`;
         markers.push(L.marker([parkingLot.lat, parkingLot.lng], {
           icon, bubblingMouseEvents: false, zIndexOffset: 440
         }).bindTooltip(parkingLot.parkingName, { direction: 'top', offset: [0, -17] }).bindPopup(popup));
@@ -3170,7 +3201,7 @@
 
       const [weatherResult, safetyResult, reportsResult] = await Promise.allSettled([
         fetchOfficialData('/api/weather', { city: region.cityName, district: region.district, lat, lng }, signal),
-        fetchOfficialData('/api/safety', { city: region.cityName, lat, lng }, signal),
+        fetchOfficialData('/api/safety', { city: region.cityName, district: region.district, lat, lng }, signal),
         fetchOfficialData('/api/data-gov/reports', { cityTid: city.dataGovLocalTid }, signal)
       ]);
       if (signal.aborted) return;
@@ -3213,12 +3244,16 @@
         const safety = safetyResult.value.data || {};
         const articles = [];
         (safety.warnings || []).forEach((warning) => articles.push({
-          title: `【氣象警特報】${warning.title}`,
-          paragraphs: [warning.description || '中央氣象署已發布警特報。', `發布時間：${formatOfficialTime(warning.issuedAt)}`]
+          title: `【${warning.category || '氣象警特報'}】${warning.title}`,
+          paragraphs: [
+            warning.description || '中央氣象署已發布警特報。',
+            (warning.affectedAreas || []).length ? `影響地區：${warning.affectedAreas.join('、')}` : `${region.cityName}${region.district}目前列於警報影響地區。`,
+            `發布時間：${formatOfficialTime(warning.issuedAt)}`
+          ]
         }));
         (safety.earthquakes || []).forEach((earthquake) => articles.push({
-          title: `【地震資訊】規模 ${earthquake.magnitude ?? '未提供'}`,
-          paragraphs: [earthquake.report, `時間：${formatOfficialTime(earthquake.originTime)}${earthquake.location ? `｜位置：${earthquake.location}` : ''}`]
+          title: `【地震資訊】${region.cityName}${region.district}震度 ${earthquake.intensity} 級`,
+          paragraphs: [earthquake.report, `時間：${formatOfficialTime(earthquake.originTime)}${earthquake.location ? `｜震央：${earthquake.location}` : ''}${earthquake.magnitude ? `｜規模：${earthquake.magnitude}` : ''}`]
         }));
         const closedRoads = state.lastTrafficRoads.filter((road) => road.status === 'closed');
         if (closedRoads.length) articles.push({
@@ -4347,6 +4382,99 @@
       selectJourneyMapStation(station);
     }
 
+    function journeyCitiesForDisasterCheck() {
+      const selectedCities = state.journeyMode === 'bus'
+        ? [state.config?.cities?.[elements.journeyCitySelect.value]?.cityName]
+        : state.journeyMode === 'tra'
+          ? [elements.journeyOriginCitySelect.value, elements.journeyDestinationCitySelect.value]
+          : [];
+      const selectedStations = [
+        state.journeyStationLookup.get(elements.journeyOriginInput.value),
+        state.journeyStationLookup.get(elements.journeyOriginSelect.value),
+        state.journeyStationLookup.get(elements.journeyDestinationInput.value),
+        state.journeyStationLookup.get(elements.journeyDestinationSelect.value)
+      ].map((station) => station?.city);
+      return [...new Set([...selectedCities, ...selectedStations].map((value) => {
+        const normalized = normalizePlaceName(String(value || ''));
+        return Object.values(state.config?.cities || {}).find((city) => (
+          normalizePlaceName(city.cityName) === normalized
+        ))?.cityName || normalized || null;
+      }).filter(Boolean))];
+    }
+
+    function journeyRouteText(result) {
+      return normalizePlaceName([
+        result.title, result.subtitle,
+        ...(result.legs || []).flatMap((leg) => [
+          leg.origin, leg.destination, leg.title, leg.routeName,
+          ...(leg.stops || []).map((stop) => stop.name || stop.stationName || stop.stopName || '')
+        ])
+      ].filter(Boolean).join(' '));
+    }
+
+    function journeyLegCities(leg) {
+      const cities = new Set();
+      const legText = normalizePlaceName([
+        leg.origin, leg.destination, leg.title, leg.routeName,
+        ...(leg.stops || []).map((stop) => stop.name || stop.stationName || stop.stopName || '')
+      ].filter(Boolean).join(' '));
+      Object.values(state.config?.cities || {}).forEach((city) => {
+        const cityName = normalizePlaceName(city.cityName);
+        if (legText.includes(cityName) || legText.includes(cityName.replace(/[縣市]$/, ''))) {
+          cities.add(city.cityName);
+        }
+      });
+      (leg.stops || []).forEach((stop) => {
+        if (stop.city) cities.add(normalizePlaceName(stop.city));
+        else if (Number(stop.lat) >= TAIWAN_BOUNDS[0][0] && Number(stop.lat) <= TAIWAN_BOUNDS[1][0]
+          && Number(stop.lng) >= TAIWAN_BOUNDS[0][1] && Number(stop.lng) <= TAIWAN_BOUNDS[1][1]) {
+          const cityCode = findNearestCityCode(Number(stop.lat), Number(stop.lng));
+          const cityName = state.config?.cities?.[cityCode]?.cityName;
+          if (cityName) cities.add(cityName);
+        }
+      });
+      const geometry = Array.isArray(leg.geometry)
+        ? leg.geometry
+        : Array.isArray(leg.geometry?.coordinates) ? leg.geometry.coordinates : [];
+      geometry.forEach((point) => {
+        const longitude = Number(Array.isArray(point) ? point[0] : point?.lng);
+        const latitude = Number(Array.isArray(point) ? point[1] : point?.lat);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)
+          || latitude < TAIWAN_BOUNDS[0][0] || latitude > TAIWAN_BOUNDS[1][0]
+          || longitude < TAIWAN_BOUNDS[0][1] || longitude > TAIWAN_BOUNDS[1][1]) return;
+        const cityCode = findNearestCityCode(latitude, longitude);
+        const cityName = state.config?.cities?.[cityCode]?.cityName;
+        if (cityName) cities.add(cityName);
+      });
+      return cities;
+    }
+
+    function journeyRouteCities(result) {
+      const cities = new Set(journeyCitiesForDisasterCheck());
+      (result.legs || []).forEach((leg) => {
+        journeyLegCities(leg).forEach((city) => cities.add(city));
+      });
+      return cities;
+    }
+
+    function journeyHazardsForResult(result) {
+      const routeText = journeyRouteText(result);
+      const routeCities = journeyRouteCities(result);
+      return state.hazards.filter((alert) => (alert.affectedCities || []).some((cityName) => (
+        routeCities.has(cityName)
+        || routeText.includes(normalizePlaceName(cityName))
+        || routeText.includes(normalizePlaceName(cityName).replace(/[縣市]$/, ''))
+      )));
+    }
+
+    function disasterTrafficImpact(alert) {
+      const text = `${alert.title || ''} ${alert.details || ''}`;
+      if (/淹水|豪雨|大雨|積水/.test(text)) return '可能造成道路積淹水、封閉或交通延誤';
+      if (/強風|陣風|颱風/.test(text)) return '可能造成道路封閉、車輛行駛受阻或大眾運輸延誤';
+      if (/低溫|濃霧|能見度/.test(text)) return '可能造成行車視線不佳及交通延誤';
+      return '可能造成道路交通延誤或局部封閉';
+    }
+
     function renderJourneyResults(results) {
       state.journeyResults = results;
       elements.journeyResults.replaceChildren();
@@ -4361,6 +4489,26 @@
         item.className = 'journey-result-card rounded-md border border-slate-200 bg-white p-4 shadow-sm';
         const duration = Number.isFinite(result.durationMinutes) ? `｜約 ${result.durationMinutes} 分鐘` : '';
         item.innerHTML = `<div class="flex items-start justify-between gap-3"><div class="min-w-0"><h3 class="text-sm font-bold text-slate-950">${escapeHtml(result.title)}</h3><p class="mt-1 text-xs leading-5 text-slate-500">${escapeHtml(result.subtitle)}</p></div><span class="max-w-40 shrink-0 whitespace-normal rounded-full px-2 py-1 text-center text-[11px] font-bold ${result.isActive ? 'bg-emerald-100 text-emerald-800' : result.transferCount ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-600'}">${escapeHtml(result.statusLabel)}</span></div><dl class="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3"><div><dt class="text-xs text-slate-500">時間</dt><dd class="mt-1 font-bold">${escapeHtml(result.departureTime)} → ${escapeHtml(result.arrivalTime)}${escapeHtml(duration)}</dd></div><div><dt class="text-xs text-slate-500">票價</dt><dd class="mt-1 font-bold text-brand-800">${escapeHtml(result.fareLabel)}</dd></div><div><dt class="text-xs text-slate-500">轉乘</dt><dd class="mt-1 font-bold">${result.transferCount ? `${result.transferCount} 次` : '直達'}</dd></div></dl>`;
+        const routeHazards = journeyHazardsForResult(result);
+        if (routeHazards.length) {
+          const warning = document.createElement('div');
+          warning.className = 'mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-950';
+          warning.setAttribute('role', 'alert');
+          warning.innerHTML = routeHazards.map((alert) => {
+            const routeCities = journeyRouteCities(result);
+            const affectedCity = (alert.affectedCities || []).find((cityName) => (
+              routeCities.has(cityName)
+              || journeyRouteText(result).includes(normalizePlaceName(cityName))
+            )) || (alert.affectedCities || [])[0] || '沿線區域';
+            const leg = result.legs?.find((segmentLeg) => journeyLegCities(segmentLeg).has(affectedCity))
+              || result.legs?.[0];
+            const segment = leg
+              ? `${leg.origin || '起點'}至${leg.destination || '終點'}路段${leg.routeName || leg.title ? `（${leg.routeName || leg.title}）` : ''}`
+              : `${affectedCity}沿線路段`;
+            return `<p><strong>${escapeHtml(segment)}有${escapeHtml(alert.title || alert.category)}的問題</strong>，${escapeHtml(disasterTrafficImpact(alert))}。</p>`;
+          }).join('');
+          item.appendChild(warning);
+        }
         if (Array.isArray(result.legs) && result.legs.length) {
           const details = document.createElement('details');
           details.className = 'mt-3 rounded-md bg-slate-50 px-3 py-2';

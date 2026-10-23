@@ -5,6 +5,7 @@ node_modules/
 npm-debug.log*
 .server-output.log
 .server-error.log
+/*.log
 *.tmp.*
 leaflet-2.0.0-alpha.1/
 .continue/
@@ -12,3 +13,8 @@ bus_realtime_cache.json*
 journey_graph_cache.json*
 data/portal-content.json*
 firebase-service-account*.json
+/foo.txt
+/out.txt
+/results.json
+/test-output.txt
+/tmp-*.js

@@ -124,6 +124,14 @@ test('announcements persist and CWA emergencies are retained without duplicates'
             affectedAreas: { location: [{ locationName: '臺灣各地' }] }
           } }] } },
           contents: { content: { contentText: '中央氣象署發布颱風海上陸上警報。' } }
+        }, {
+          identifier: 'rain-warning-hualien',
+          datasetInfo: { datasetDescription: '豪雨特報', issueTime: '2026-08-04T18:30:00+08:00' },
+          hazardConditions: { hazards: { hazard: [{ info: {
+          phenomena: '豪雨特報',
+          affectedAreas: { location: [{ locationName: '花蓮縣花蓮市' }] }
+          } }] } },
+          contents: { content: { contentText: '花蓮縣發布豪雨特報，請留意局部積淹水。' } }
         }]
       }
     };
@@ -141,12 +149,26 @@ test('announcements persist and CWA emergencies are retained without duplicates'
       const response = await fetch(`${baseUrl}/api/information`);
       if (!response.ok) return null;
       const payload = await response.json();
-      return payload.data.emergencies.length === 2 ? payload : null;
+      return payload.data.hazards?.length === 2 && payload.data.emergencies.length === 1 ? payload : null;
     });
     assert.equal(initial.data.announcements.length, 0);
-    assert.deepEqual(new Set(initial.data.emergencies.map((item) => item.category)), new Set(['地震', '颱風警報']));
+    assert.deepEqual(new Set(initial.data.emergencies.map((item) => item.category)), new Set(['颱風警報']));
+    assert.match(initial.data.emergencies[0].title, /颱風即時通知/);
+    assert.ok(initial.data.emergencies[0].affectedAreas.length > 3);
+    assert.deepEqual(new Set(initial.data.hazards.map((item) => item.category)), new Set(['颱風警報', '淹水警報']));
     assert.equal(initial.fcmTopic, 'test-information-topic');
-    await waitFor(() => fcmMessages.filter((entry) => entry.message?.data?.type === 'emergency').length === 2);
+    const localHazards = await (await fetch(`${baseUrl}/api/hazards?lat=25.033&lng=121.565`)).json();
+    assert.equal(localHazards.data.cityName, '臺北市');
+    assert.equal(localHazards.data.topic, 'taiwan-disaster-taipei');
+    assert.equal(localHazards.data.alerts.length, 1);
+    const hualienHazards = await (await fetch(`${baseUrl}/api/hazards?lat=23.987&lng=121.601`)).json();
+    assert.equal(hualienHazards.data.cityName, '花蓮縣');
+    assert.equal(hualienHazards.data.topic, 'taiwan-disaster-hualien');
+    assert.equal(hualienHazards.data.alerts.length, 2);
+    await waitFor(() => fcmMessages.some((entry) => (
+      entry.message?.data?.type === 'emergency'
+      && entry.message?.topic === 'taiwan-disaster-taipei'
+    )));
 
     const unauthorized = await fetch(`${baseUrl}/api/admin/announcements`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
@@ -240,7 +262,8 @@ test('announcements persist and CWA emergencies are retained without duplicates'
     });
     const final = await (await fetch(`${baseUrl}/api/information`)).json();
     assert.equal(afterRestart.data.announcements[0].title, '服務維護公告');
-    assert.equal(final.data.emergencies.length, 2);
+    assert.equal(final.data.emergencies.length, 0);
+    assert.equal(final.data.hazards.length, 0);
     assert.equal(cwaRequestCount, cwaRequestsBeforeRestart);
 
     const restartLogin = await fetch(`${baseUrl}/api/admin/login`, {

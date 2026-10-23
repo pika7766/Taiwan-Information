@@ -1,7 +1,0 @@
-node_modules/
-ios/App/Pods/
-ios/DerivedData/
-ios/App/App.xcworkspace/xcuserdata/
-ios/App/App.xcodeproj/xcuserdata/
-ios/App/App/GoogleService-Info.plist
-安裝檔/*.ipa

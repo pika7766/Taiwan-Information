@@ -16,8 +16,42 @@ const mobile = Object.assign(window.__TAIWAN_SMART_LIFE_MOBILE__ || {}, {
 });
 window.__TAIWAN_SMART_LIFE_MOBILE__ = mobile;
 const DEFAULT_FCM_TOPIC = 'taiwan-smart-life-information';
+const FIRST_RUN_PERMISSIONS_KEY = 'taiwan-smart-life-first-run-permissions-v1';
+const DISASTER_ALERTS_POLL_MS = 60_000;
 let appIsActive = true;
 let messagingSetupPromise = null;
+let disasterPollingTimer = null;
+let disasterTopic = null;
+let locationWatchId = null;
+let disasterPollPromise = null;
+
+function notifiedDisasterIds() {
+  try {
+    const values = JSON.parse(localStorage.getItem('taiwan-smart-life-notified-disasters') || '[]');
+    return new Set(Array.isArray(values) ? values.map(String) : []);
+  } catch (error) {
+    console.warn('災情通知紀錄讀取失敗：', error);
+    return new Set();
+  }
+}
+
+function rememberDisasterNotification(id) {
+  const notified = notifiedDisasterIds();
+  notified.add(String(id));
+  localStorage.setItem('taiwan-smart-life-notified-disasters', JSON.stringify([...notified].slice(-300)));
+}
+
+function scheduleDisasterNotification(alert) {
+  if (!alert?.id || notifiedDisasterIds().has(String(alert.id))) return;
+  rememberDisasterNotification(alert.id);
+  LocalNotifications.schedule({ notifications: [{
+    id: notificationId(alert.id),
+    title: alert.title || '中央氣象署災害警報',
+    body: alert.summary || alert.details || '目前定位區域收到氣象警報，請開啟 App 查看詳情。',
+    channelId: 'portal-information',
+    extra: { type: 'emergency', section: 'emergencies', itemId: String(alert.id) }
+  }] }).catch((error) => console.error('災害通知排程失敗：', error));
+}
 
 function notificationId(value) {
   let hash = 2166136261;
@@ -52,6 +86,91 @@ async function serverFcmTopic() {
     console.warn('FCM 主題設定讀取失敗，使用預設值：', error);
   }
   return DEFAULT_FCM_TOPIC;
+}
+
+async function refreshLocationDisasterAlerts(position) {
+  if (!position || !appIsActive || disasterPollPromise) return;
+  disasterPollPromise = (async () => {
+    const apiBaseUrl = String(mobile.apiBaseUrl || '').replace(/\/$/, '');
+    const endpoint = new URL(`${apiBaseUrl}/api/hazards`);
+    endpoint.searchParams.set('lat', String(position.coords.latitude));
+    endpoint.searchParams.set('lng', String(position.coords.longitude));
+    const response = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+    const payload = await response.json();
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.message || `災害警報 API 回應 HTTP ${response.status}`);
+    }
+    if (mobile.notificationPermission === 'granted' && payload.data?.topic) {
+      if (disasterTopic && disasterTopic !== payload.data.topic) {
+        await FirebaseMessaging.unsubscribeFromTopic({ topic: disasterTopic });
+      }
+      if (disasterTopic !== payload.data.topic) {
+        await FirebaseMessaging.subscribeToTopic({ topic: payload.data.topic });
+        disasterTopic = payload.data.topic;
+      }
+      (payload.data.alerts || []).forEach(scheduleDisasterNotification);
+    }
+    return payload.data;
+  })().catch((error) => {
+    console.warn('目前定位區域災害資訊更新失敗：', error);
+    return null;
+  }).finally(() => {
+    disasterPollPromise = null;
+  });
+  return disasterPollPromise;
+}
+
+function acceptDisasterPosition(position) {
+  mobile.lastLocation = position;
+  refreshLocationDisasterAlerts(position).catch((error) => {
+    console.error('定位區域災害通知更新失敗：', error);
+  });
+}
+
+async function startLocationMonitoring({ requestPermission = false } = {}) {
+  try {
+    let permission = await Geolocation.checkPermissions();
+    if (requestPermission && permission.location !== 'granted') {
+      permission = await Geolocation.requestPermissions({ permissions: ['location'] });
+    }
+    mobile.locationPermission = permission.location;
+    if (permission.location !== 'granted') return false;
+    const position = await Geolocation.getCurrentPosition({
+      enableHighAccuracy: true, timeout: 15_000, maximumAge: 60_000
+    });
+    acceptDisasterPosition(position);
+    if (locationWatchId === null) {
+      locationWatchId = await Geolocation.watchPosition({
+        enableHighAccuracy: false, timeout: 30_000, maximumAge: 60_000, minimumUpdateInterval: 120_000
+      }, (nextPosition, error) => {
+        if (error) {
+          console.warn('定位區域監看失敗：', error);
+          return;
+        }
+        if (nextPosition) acceptDisasterPosition(nextPosition);
+      });
+    }
+    return true;
+  } catch (error) {
+    console.warn('定位權限或位置讀取失敗：', error);
+    mobile.locationPermission = 'denied';
+    return false;
+  }
+}
+
+function startDisasterAlertPolling() {
+  window.clearInterval(disasterPollingTimer);
+  if (!appIsActive || !mobile.lastLocation) return;
+  refreshLocationDisasterAlerts(mobile.lastLocation).catch((error) => {
+    console.error('災害警報輪詢失敗：', error);
+  });
+  disasterPollingTimer = window.setInterval(() => {
+    if (appIsActive && mobile.lastLocation) {
+      refreshLocationDisasterAlerts(mobile.lastLocation).catch((error) => {
+        console.error('災害警報輪詢失敗：', error);
+      });
+    }
+  }, DISASTER_ALERTS_POLL_MS);
 }
 
 function renderNativeNotificationState(message, state = 'idle', busy = false) {
@@ -136,6 +255,7 @@ FirebaseMessaging.addListener('tokenReceived', () => {
 });
 
 FirebaseMessaging.addListener('notificationReceived', async ({ notification }) => {
+  if (notification.data?.itemId) rememberDisasterNotification(notification.data.itemId);
   if (mobile.platform !== 'android' || !appIsActive) return;
   await LocalNotifications.schedule({ notifications: [{
     id: notificationId(notification.id || notification.data?.itemId),
@@ -241,7 +361,16 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (mobile.platform === 'android') nativeWindowTasks.push(StatusBar.setBackgroundColor({ color: '#0f766e' }));
   if (mobile.platform === 'ios') nativeWindowTasks.push(Keyboard.setResizeMode({ mode: KeyboardResize.Native }));
   await Promise.allSettled(nativeWindowTasks);
-  initializeFirebaseMessaging();
+  const firstRun = localStorage.getItem(FIRST_RUN_PERMISSIONS_KEY) !== 'complete';
+  if (firstRun) {
+    await initializeFirebaseMessaging({ requestPermission: true });
+    await startLocationMonitoring({ requestPermission: true });
+    localStorage.setItem(FIRST_RUN_PERMISSIONS_KEY, 'complete');
+  } else {
+    initializeFirebaseMessaging();
+    await startLocationMonitoring();
+  }
+  startDisasterAlertPolling();
   if (mobile.pendingInformationSection) revealInformationSection(mobile.pendingInformationSection);
   window.setTimeout(() => SplashScreen.hide().catch(() => undefined), 450);
 });
@@ -258,5 +387,8 @@ App.addListener('appStateChange', ({ isActive }) => {
     window.dispatchEvent(new Event('resize'));
     messagingSetupPromise = null;
     initializeFirebaseMessaging();
+    startLocationMonitoring().then(startDisasterAlertPolling);
+  } else {
+    window.clearInterval(disasterPollingTimer);
   }
 });
