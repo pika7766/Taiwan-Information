@@ -2266,9 +2266,10 @@
       elements.infoTitle.textContent = station.stationName;
       const wrapper = document.createElement('div');
       const cityCode = findNearestCityCode(station.lat, station.lng);
-      wrapper.innerHTML = `<div class="grid grid-cols-2 gap-3"><div class="rounded-md bg-sky-50 p-4"><span class="block text-xs text-slate-500">可借車輛</span><strong class="text-2xl text-sky-800">${Number.isFinite(station.availableRentBikes) ? station.availableRentBikes : '-'}</strong></div><div class="rounded-md bg-emerald-50 p-4"><span class="block text-xs text-slate-500">可還空位</span><strong class="text-2xl text-emerald-800">${Number.isFinite(station.availableReturnBikes) ? station.availableReturnBikes : '-'}</strong></div></div><div class="bike-disaster-warning">${stationDisasterWarning('U-Bike站', station, cityCode)}</div><div class="mt-4 flex gap-2"><button type="button" class="share-bike rounded-md border border-slate-300 px-3 py-2 text-xs font-bold">分享站點</button></div>`;
+      wrapper.innerHTML = `<div class="grid grid-cols-2 gap-3"><div class="rounded-md bg-sky-50 p-4"><span class="block text-xs text-slate-500">可借車輛</span><strong class="text-2xl text-sky-800">${Number.isFinite(station.availableRentBikes) ? station.availableRentBikes : '-'}</strong></div><div class="rounded-md bg-emerald-50 p-4"><span class="block text-xs text-slate-500">可還空位</span><strong class="text-2xl text-emerald-800">${Number.isFinite(station.availableReturnBikes) ? station.availableReturnBikes : '-'}</strong></div></div><div class="bike-disaster-warning station-disaster-warning">${stationDisasterWarning('U-Bike站', station, cityCode)}</div><div class="mt-4 flex gap-2"><button type="button" class="share-bike rounded-md border border-slate-300 px-3 py-2 text-xs font-bold">分享站點</button></div>`;
       wrapper.querySelector('.share-bike').addEventListener('click', shareCurrentMap);
       elements.infoContent.replaceChildren(wrapper);
+      refreshStationDisasterWarning('U-Bike站', station, wrapper.querySelector('.station-disaster-warning'));
     }
 
     function refreshSelectedBikeDisasterWarning() {
@@ -2673,7 +2674,7 @@
       return source.trim().slice(0, 180);
     }
 
-    function stationDisasterWarning(type, item, datasetKey) {
+    function stationDisasterWarning(type, item, datasetKey, hazards = state.hazards) {
       const requestedCityCode = String(datasetKey || '').replace(/^CITY:/, '');
       const itemCityCode = state.config?.cities?.[item?.city]
         ? item.city
@@ -2683,10 +2684,10 @@
         : null;
       const cityCode = itemCityCode || coordinateCityCode || requestedCityCode;
       const city = state.config?.cities?.[cityCode];
-      if (!city || !Array.isArray(state.hazards)) return '';
+      if (!city || !Array.isArray(hazards)) return '';
 
       const cityName = normalizePlaceName(city.cityName);
-      const affectedAlerts = state.hazards.filter((alert) => {
+      const affectedAlerts = hazards.filter((alert) => {
         const affectedLocations = [
           ...(Array.isArray(alert.affectedCities) ? alert.affectedCities : []),
           ...(Array.isArray(alert.affectedAreas) ? alert.affectedAreas : []),
@@ -2726,6 +2727,46 @@
       </div>`;
     }
 
+    function stationHazardsFromPayload(payload) {
+      const cityName = normalizePlaceName(String(payload?.data?.cityName || ''));
+      if (!cityName || !Array.isArray(payload?.data?.alerts)) return [];
+      return payload.data.alerts.map((alert) => ({
+        id: String(alert.id || `${cityName}:${alert.category || alert.title || '災害'}`),
+        category: alert.category || alert.title || '災害訊息',
+        title: alert.title || alert.category || '災害訊息',
+        summary: alert.description || '',
+        details: alert.description || '',
+        affectedCities: [cityName],
+        affectedAreas: Array.isArray(alert.affectedAreas) ? alert.affectedAreas : [],
+        issuedAt: alert.issuedAt || null,
+        receivedAt: payload.observedAt || null
+      }));
+    }
+
+    async function refreshStationDisasterWarning(type, item, target) {
+      if (!target || !Number.isFinite(Number(item?.lat)) || !Number.isFinite(Number(item?.lng))) return;
+      const requestSequence = Number(target.dataset.disasterRequestSequence || 0) + 1;
+      target.dataset.disasterRequestSequence = String(requestSequence);
+      const endpoint = new URL('/api/hazards', API_BASE_URL);
+      endpoint.searchParams.set('lat', String(Number(item.lat)));
+      endpoint.searchParams.set('lng', String(Number(item.lng)));
+      try {
+        const response = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || `HTTP ${response.status}`);
+        }
+        if (!target.isConnected || target.dataset.disasterRequestSequence !== String(requestSequence)) return;
+        const cityCode = payload.data?.cityCode || findNearestCityCode(Number(item.lat), Number(item.lng));
+        target.innerHTML = stationDisasterWarning(type, item, cityCode, stationHazardsFromPayload(payload));
+      } catch (error) {
+        console.warn('站點災害資訊讀取失敗：', error);
+        if (target.isConnected && target.dataset.disasterRequestSequence === String(requestSequence)) {
+          target.textContent = '災害資訊目前無法讀取';
+        }
+      }
+    }
+
     function renderBikeLayer(payload, cityCode) {
       const layer = state.transportLayers?.bike;
       if (!layer) return;
@@ -2746,9 +2787,13 @@
           <p>可還空位：${Number.isFinite(station.availableReturnBikes) ? `${station.availableReturnBikes} 格` : '未提供即時資料'}</p>
           <p>站點狀況：${serviceStatus}</p>
           <p>更新時間：${escapeHtml(formatOfficialTime(station.updateTime))}</p>
-          ${stationDisasterWarning('U-Bike站', station, cityCode)}</div>`;
+          <div class="station-disaster-warning">${stationDisasterWarning('U-Bike站', station, cityCode)}</div></div>`;
         markers.push(L.marker([station.lat, station.lng], { icon, bubblingMouseEvents: false, zIndexOffset: 450 })
           .bindPopup(popup)
+          .on('popupopen', (event) => {
+            const warning = event.popup.getElement()?.querySelector('.station-disaster-warning');
+            refreshStationDisasterWarning('U-Bike站', station, warning);
+          })
           .on('click', () => showBikeDetails(station)));
       });
       layer.addLayers(markers);
@@ -2792,10 +2837,14 @@
           ${parkingLot.serviceTime ? `<p>服務時間：${escapeHtml(parkingLot.serviceTime)}</p>` : ''}
           ${parkingLot.fareDescription ? `<p>費率：${escapeHtml(parkingLot.fareDescription)}</p>` : ''}
           <p>更新時間：${escapeHtml(formatOfficialTime(parkingLot.updateTime))}</p>
-          ${stationDisasterWarning('停車場', parkingLot, cityCode)}</div>`;
+          <div class="station-disaster-warning">${stationDisasterWarning('停車場', parkingLot, cityCode)}</div></div>`;
         markers.push(L.marker([parkingLot.lat, parkingLot.lng], {
           icon, bubblingMouseEvents: false, zIndexOffset: 440
-        }).bindTooltip(parkingLot.parkingName, { direction: 'top', offset: [0, -17] }).bindPopup(popup));
+        }).bindTooltip(parkingLot.parkingName, { direction: 'top', offset: [0, -17] }).bindPopup(popup)
+          .on('popupopen', (event) => {
+            const warning = event.popup.getElement()?.querySelector('.station-disaster-warning');
+            refreshStationDisasterWarning('停車場', parkingLot, warning);
+          }));
       });
       layer.addLayers(markers);
       state.loadedParkingCityCode = cityCode;

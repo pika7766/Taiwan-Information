@@ -228,7 +228,7 @@ async function initializeFirebaseMessaging({ requestPermission = true } = {}) {
     return true;
   })().catch((error) => {
     console.warn('FCM 通知設定失敗：', error);
-    renderNativeNotificationState(`通知設定失敗：${error?.message || '請稍後再試'}`, 'error');
+    renderNativeNotificationState('通知功能目前無法使用，請稍後再試', 'error');
     return false;
   });
   return messagingSetupPromise;

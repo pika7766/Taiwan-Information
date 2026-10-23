@@ -8,6 +8,7 @@ const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const mobileHtml = fs.readFileSync(path.join(root, '手機apk', 'www', 'index.html'), 'utf8');
 const mobileSyncScript = fs.readFileSync(path.join(root, '手機apk', 'scripts', 'sync-web.mjs'), 'utf8');
+const mobileRuntime = fs.readFileSync(path.join(root, '手機apk', 'src', 'mobile-runtime.js'), 'utf8');
 
 function extractFunctions(startMarker, endMarker) {
   const start = html.indexOf(startMarker);
@@ -60,4 +61,9 @@ test('mobile app has the web portal link in its related-links section', () => {
   assert.match(mobileHtml, /id="portal-app-link"[^>]+href="https:\/\/taiwan-information\.onrender\.com\/"/);
   assert.match(mobileHtml, /id="portal-app-link-label"[^>]*>台灣智慧生活網</);
   assert.doesNotMatch(mobileHtml, /portal-app-link-label[^>]*>台灣智慧生活網apk下載</);
+});
+
+test('mobile notification errors do not expose Firebase initialization details', () => {
+  assert.match(mobileRuntime, /通知功能目前無法使用，請稍後再試/);
+  assert.doesNotMatch(mobileRuntime, /通知設定失敗：\$\{error\?\.message/);
 });

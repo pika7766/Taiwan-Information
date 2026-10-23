@@ -53,6 +53,11 @@ function createRendererContext() {
   });
   const context = {
     state,
+    API_BASE_URL: 'https://example.test',
+    URL,
+    fetch: async () => {
+      throw new Error('Unexpected fetch in this test');
+    },
     normalizePlaceName: (value = '') => value.trim().replaceAll('台', '臺'),
     findCityCodeByName: (value = '') => Object.entries(state.config.cities)
       .find(([, city]) => city.cityName === value)?.[0] || null,
@@ -167,4 +172,55 @@ test('station city takes precedence over a different requested dataset city', ()
     { city: 'Tainan', lat: 25.033, lng: 121.565 },
     'CITY:Taipei'
   ), '');
+});
+
+test('station details fetch local hazards and render the returned warning', async () => {
+  const { context } = createRendererContext();
+  context.fetch = async (endpoint) => {
+    assert.equal(endpoint.pathname, '/api/hazards');
+    assert.equal(endpoint.searchParams.get('lat'), '23.11');
+    assert.equal(endpoint.searchParams.get('lng'), '120.29');
+    return {
+      ok: true,
+      async json() {
+        return {
+          success: true,
+          observedAt: '2026-10-23T14:56:52.023Z',
+          data: {
+            cityCode: 'Tainan',
+            cityName: '臺南市',
+            alerts: [{
+              id: 'tainan-typhoon',
+              category: '颱風警報',
+              title: '海上陸上颱風',
+              description: '臺南市；67；zh-TW；海上陸上颱風；警報；陸上強風',
+              issuedAt: null,
+              affectedAreas: []
+            }]
+          }
+        };
+      }
+    };
+  };
+  const helper = readFunction(
+    '    function disasterAlertHighlights(',
+    '    function renderBikeLayer('
+  );
+  vm.runInNewContext(helper, context);
+  const warning = {
+    isConnected: true,
+    dataset: {},
+    innerHTML: '',
+    textContent: ''
+  };
+
+  await context.refreshStationDisasterWarning(
+    'U-Bike站',
+    { lat: 23.11, lng: 120.29 },
+    warning
+  );
+
+  assert.match(warning.innerHTML, /可能災情資訊・臺南市U-Bike站/);
+  assert.match(warning.innerHTML, /海上陸上颱風、陸上強風/);
+  assert.doesNotMatch(warning.innerHTML, /zh-TW|臺南市；67/);
 });
