@@ -2518,6 +2518,48 @@
       });
     }
 
+    function renderDisasterAlertLayer() {
+      const layer = state.disasterAlertLayer;
+      if (!layer) return;
+      layer.clearLayers();
+      if (!state.config || !Array.isArray(state.hazards)) return;
+
+      state.hazards.forEach((alert) => {
+        const affectedCities = new Set((alert.affectedCities || [])
+          .map((cityName) => normalizePlaceName(String(cityName || ''))));
+        if (!affectedCities.size) return;
+        Object.values(state.config.cities).forEach((city) => {
+          if (!affectedCities.has(normalizePlaceName(city.cityName))
+            || !Array.isArray(city.mapCenter) || city.mapCenter.length !== 2
+            || !city.mapCenter.every(Number.isFinite)) return;
+
+          const details = alert.details || alert.summary || '請留意中央氣象署最新資訊。';
+          const popup = `<div class="transport-popup"><strong>${escapeHtml(alert.title || alert.category || '災害警報')}</strong>
+            <p>受影響區域：${escapeHtml(city.cityName)}</p>
+            <p>${escapeHtml(details).replace(/\n/g, '<br>')}</p>
+            ${alert.issuedAt ? `<p>發布時間：${escapeHtml(formatOfficialTime(alert.issuedAt))}</p>` : ''}
+            ${alert.source ? `<p>資料來源：${escapeHtml(alert.source)}</p>` : ''}
+          </div>`;
+          L.circleMarker(city.mapCenter, {
+            radius: 10,
+            color: '#991b1b',
+            weight: 2,
+            fillColor: '#ef4444',
+            fillOpacity: 0.9,
+            bubblingMouseEvents: false,
+            keyboard: true
+          })
+            .bindPopup(popup)
+            .bindTooltip(`${city.cityName}・${alert.title || alert.category || '災害警報'}`, {
+              direction: 'top',
+              offset: [0, -10]
+            })
+            .addTo(layer);
+        });
+      });
+      layer.bringToFront();
+    }
+
     function renderBikeLayer(payload, cityCode) {
       const layer = state.transportLayers?.bike;
       if (!layer) return;
