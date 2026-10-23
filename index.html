@@ -700,10 +700,10 @@
             <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-transport-layers.png" alt="地圖左上角四個交通圖層按鈕與 YouBike 數量群組">
             <h3 class="mt-4 text-base font-bold text-slate-950">2. 交通圖層與數量群組</h3>
             <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
-              <li>先按左上角「圖層」展開清單，再分別開關「即時路況」、「公車動態」、「YouBike 站點」與「停車場」；按鈕會顯示目前是讀取中、顯示或隱藏。</li>
+              <li>先按左上角「圖層」展開清單，再分別開關「公車動態」、「YouBike 站點」與「停車場」；按鈕會顯示目前是讀取中、顯示或隱藏。「即時路況」功能目前暫不開放。</li>
               <li>YouBike 與停車場標記較多，縮小地圖時圓圈會顯示區域內站點／停車場數量，放大後會拆成個別標記。</li>
               <li>YouBike 與停車場不能同時開啟；切換其中一個時，另一個會自動關閉，避免標記互相遮擋。</li>
-              <li>公車即時資料每 12 秒更新；路況、YouBike 可用量與停車位每 30 分鐘更新；路線、站點及場站固定資料每日更新。所有資料都讀取伺服器共用快取。</li>
+              <li>公車動態由伺服器每 12 秒更新；YouBike、停車場與固定資料每 5 分鐘更新。所有資料都讀取伺服器共用快取。</li>
             </ul>
           </section>
 
@@ -711,7 +711,7 @@
             <img class="block aspect-video w-full min-w-0 max-w-full rounded-md border border-slate-200 bg-slate-100 object-cover object-top" src="images/tutorial-road-parking.png" alt="道路壅塞色彩、停車場標記與剩餘車位資訊">
             <h3 class="mt-4 text-base font-bold text-slate-950">3. 即時路況與停車場</h3>
             <ul class="mt-2 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
-              <li>即時路況會依 TDX 回傳的道路狀況以不同顏色繪製；點擊路段可查看路況、速度及資料時間。</li>
+              <li>即時路況功能目前暫不開放，敬請見諒。</li>
               <li>開啟停車場後，點選「P」標記可查看剩餘車位、總車位、營運狀態、地址、電話、服務時間與費率；未提供即時車位時會明確標示。</li>
             </ul>
           </section>
@@ -962,9 +962,8 @@
     const TAIWAN_BOUNDS = [[21.5, 119.0], [26.0, 122.5]];
     const GEOLOCATION_FALLBACK_DELAY_MS = 10_000;
     const TDX_DYNAMIC_REFRESH_INTERVAL_MS = 12_000;
-    const TDX_MOBILITY_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
     const BUS_REFRESH_INTERVAL_MS = TDX_DYNAMIC_REFRESH_INTERVAL_MS;
-    const SLOW_TRANSPORT_REFRESH_INTERVAL_MS = TDX_MOBILITY_REFRESH_INTERVAL_MS;
+    const SLOW_TRANSPORT_REFRESH_INTERVAL_MS = TDX_DYNAMIC_REFRESH_INTERVAL_MS;
     const MANUAL_MAP_REFRESH_DELAY_MS = 5_000;
     const MAP_CITY_SWITCH_BUFFER_METERS = 500;
     const PUBLIC_STATUS_REFRESH_INTERVAL_MS = 15_000;
@@ -1006,7 +1005,7 @@
       geocodeAbortController: null,
       mapSearchAbortController: null,
       officialDataAbortController: null,
-      transportAbortControllers: {},
+      transportAbortController: null,
       transportRefreshTimer: null,
       manualMapMovementPending: false,
       manualMapRefreshDueAt: 0,
@@ -1408,19 +1407,12 @@
       window.clearTimeout(state.transportRefreshTimer);
     }
 
-    function abortTransportRequests(layerKeys = Object.keys(state.transportAbortControllers)) {
-      layerKeys.forEach((layerKey) => {
-        state.transportAbortControllers[layerKey]?.abort();
-        delete state.transportAbortControllers[layerKey];
-      });
-    }
-
     function markManualMapMovement(force = false) {
       if (!force && Date.now() < state.programmaticMapMoveUntil) return;
       state.manualMapMovementPending = true;
       state.manualMapRefreshDueAt = Date.now() + MANUAL_MAP_REFRESH_DELAY_MS;
       window.clearTimeout(state.transportRefreshTimer);
-      abortTransportRequests();
+      state.transportAbortController?.abort();
       if (state.transportDataSuspended) return;
       scheduleTransportLayerRefresh(MANUAL_MAP_REFRESH_DELAY_MS);
     }
@@ -1743,10 +1735,47 @@
       button.setAttribute('aria-busy', 'false');
     }
 
+    function handleTrafficLayerDisabled(showAlert = false) {
+      const layer = state.transportLayers?.traffic;
+      const button = state.transportLayerButtons?.traffic;
+      if (state.map && layer) {
+        if (state.map.hasLayer(layer)) state.map.removeLayer(layer);
+        layer.clearLayers();
+      }
+      if (button) {
+        button.dataset.loading = 'false';
+        button.setAttribute('aria-busy', 'false');
+        button.setAttribute('aria-pressed', 'false');
+        button.setAttribute('aria-label', `${button.dataset.label}，目前隱藏，點擊切換`);
+      }
+      state.lastTrafficPayload = null;
+      state.lastTrafficRoads = [];
+      state.lastTransportFetch.traffic = null;
+      if (showAlert && typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert('即時路況功能暫不開放，造成不便敬請見諒。');
+      }
+      return false;
+    }
+
     function setTransportLayerVisibility(layerKey, visible) {
       const layer = state.transportLayers?.[layerKey];
       const button = state.transportLayerButtons?.[layerKey];
       if (!state.map || !layer || !button) return;
+      if (layerKey === 'traffic') {
+        if (visible) {
+          return handleTrafficLayerDisabled(true);
+        }
+        if (state.map.hasLayer(layer)) state.map.removeLayer(layer);
+        layer.clearLayers();
+        button.dataset.loading = 'false';
+        button.setAttribute('aria-busy', 'false');
+        button.setAttribute('aria-pressed', 'false');
+        button.setAttribute('aria-label', `${button.dataset.label}，目前隱藏，點擊切換`);
+        state.lastTrafficPayload = null;
+        state.lastTrafficRoads = [];
+        state.lastTransportFetch.traffic = null;
+        return false;
+      }
       if (state.transportDataSuspended) return;
       if (!visible) {
         state.map.removeLayer(layer);
@@ -1801,7 +1830,7 @@
     function createTransportLayerControl() {
       const definitions = [
         {
-          key: 'traffic', label: '即時路況',
+          key: 'traffic', label: '即時路況', disabled: true,
           icon: '<span class="traffic-key" style="background:#16a34a"></span><span class="traffic-key" style="background:#eab308"></span><span class="traffic-key" style="background:#dc2626"></span>'
         },
         { key: 'bus', label: '公車動態', icon: '<span aria-hidden="true">🚌</span>' },
@@ -1840,6 +1869,10 @@
           button.innerHTML = `${definition.icon}<span>${definition.label}</span><span class="transport-layer-state" aria-live="polite"></span>`;
           L.DomEvent.on(button, 'click', (event) => {
             L.DomEvent.stop(event);
+            if (definition.key === 'traffic') {
+              handleTrafficLayerDisabled(true);
+              return;
+            }
             if (definition.disabled) {
               window.alert('此功能暫不開放，造成不便敬請見諒。');
               return;
@@ -2609,31 +2642,12 @@
       state.loadedParkingCityCode = cityCode;
     }
 
-    function renderTrafficLayer(trafficPayload) {
+    function renderTrafficLayer(roadPayload, trafficPayload) {
       const layer = state.transportLayers?.traffic;
       if (!layer) return;
       layer.clearLayers();
-      const colors = {
-        smooth: '#16a34a', slow: '#eab308', congested: '#dc2626',
-        closed: '#991b1b', unknown: '#64748b'
-      };
-      const roads = trafficPayload.data?.roads || [];
-      state.lastTrafficRoads = roads;
-      roads.forEach((road) => {
-        const color = colors[road.status] || colors.unknown;
-        const popup = `<div class="transport-popup"><strong>${escapeHtml(road.roadName || '未命名路段')}</strong>
-          ${road.sectionName ? `<p>${escapeHtml(road.sectionName)}</p>` : ''}
-          <p>目前路況：${escapeHtml(road.statusLabel || '無即時監測資料')}</p>
-          <p>行駛速度：${Number.isFinite(road.speed) ? `${road.speed} km/h` : '未提供'}</p>
-          <p>資料時間：${escapeHtml(formatOfficialTime(road.updateTime))}</p></div>`;
-        (road.lines || []).forEach((line) => {
-          if (!Array.isArray(line) || line.length < 2) return;
-          L.polyline(line, {
-            color, weight: 7, opacity: road.status === 'unknown' ? 0.7 : 0.86,
-            renderer: state.trafficRenderer, bubblingMouseEvents: false
-          }).bindPopup(popup).addTo(layer);
-        });
-      });
+      // 即時路況功能已停用，不渲染任何道路資料
+      state.lastTrafficRoads = [];
     }
 
     async function refreshTransportLayers(lat, lng, cityCode, options = {}) {
@@ -2644,34 +2658,28 @@
       const isActive = (layerKey) => requestedLayers.has(layerKey)
         && (force || state.map.hasLayer(state.transportLayers[layerKey]));
       const now = Date.now();
-      const viewportRadius = Math.ceil(state.map.distance(
-        state.map.getCenter(), state.map.getBounds().getNorthEast()
-      ));
-      const trafficRadius = Math.min(500_000, Math.max(1_000, viewportRadius));
       const distanceFrom = (record) => record
         ? state.map.distance([lat, lng], [record.lat, record.lng])
         : Infinity;
       const cityChanged = state.loadedTransportCityCode !== cityCode;
+      const roadRecord = state.lastTransportFetch.roads;
       const trafficRecord = state.lastTransportFetch.traffic;
       const bikeRecord = state.lastTransportFetch.bike;
       const parkingRecord = state.lastTransportFetch.parking;
       const shouldLoadBus = isActive('bus');
       const shouldLoadBusStops = shouldLoadBus && state.loadedBusStopCityCode !== cityCode;
-      const shouldLoadTraffic = isActive('traffic') && (force || forceTdx || cityChanged
-        || !state.lastTrafficPayload
-        || distanceFrom(trafficRecord) + trafficRadius > (trafficRecord?.radius || 0)
-        || Math.abs(trafficRadius - (trafficRecord?.radius || 0)) >= Math.max(500, trafficRadius * 0.2)
-        || now - (trafficRecord?.at || 0) >= TDX_MOBILITY_REFRESH_INTERVAL_MS);
+      const shouldLoadRoads = false;
+      const shouldLoadTraffic = false;
       const bikeDatasetKey = `CITY:${cityCode}`;
       const shouldLoadBike = isActive('bike') && (force || forceTdx || cityChanged || state.loadedBikeCityCode !== bikeDatasetKey
-        || distanceFrom(bikeRecord) >= 8000 || now - (bikeRecord?.at || 0) >= TDX_MOBILITY_REFRESH_INTERVAL_MS);
+        || distanceFrom(bikeRecord) >= 8000 || now - (bikeRecord?.at || 0) >= 5 * 60 * 1000);
       const parkingDatasetKey = `CITY:${cityCode}`;
       const shouldLoadParking = isActive('parking') && (force || forceTdx || cityChanged
         || state.loadedParkingCityCode !== parkingDatasetKey
-        || distanceFrom(parkingRecord) >= 8000 || now - (parkingRecord?.at || 0) >= TDX_MOBILITY_REFRESH_INTERVAL_MS);
+        || distanceFrom(parkingRecord) >= 8000 || now - (parkingRecord?.at || 0) >= 5 * 60 * 1000);
       const actualLoadingKeys = new Set(options.loadingKeys || []);
       if (shouldLoadBus) actualLoadingKeys.add('bus');
-      if (shouldLoadTraffic) actualLoadingKeys.add('traffic');
+      if (shouldLoadRoads || shouldLoadTraffic) actualLoadingKeys.add('traffic');
       if (shouldLoadBike) actualLoadingKeys.add('bike');
       if (shouldLoadParking) actualLoadingKeys.add('parking');
       const loadingSequences = { ...(options.loadingSequences || {}) };
@@ -2682,19 +2690,12 @@
         if (actualLoadingKeys.has(layerKey)) finishTransportLayerLoading(layerKey, loadingSequences[layerKey]);
       };
 
-      if (!shouldLoadBus && !shouldLoadTraffic && !shouldLoadBike && !shouldLoadParking) {
+      if (!shouldLoadBus && !shouldLoadRoads && !shouldLoadTraffic && !shouldLoadBike && !shouldLoadParking) {
         actualLoadingKeys.forEach((layerKey) => window.setTimeout(() => finishLoading(layerKey), 180));
         return;
       }
 
-      if (cityChanged) {
-        abortTransportRequests();
-      } else {
-        if (shouldLoadBus) abortTransportRequests(['bus']);
-        if (shouldLoadTraffic) abortTransportRequests(['traffic']);
-        if (shouldLoadBike) abortTransportRequests(['bike']);
-        if (shouldLoadParking) abortTransportRequests(['parking']);
-      }
+      state.transportAbortController?.abort();
       if (cityChanged) {
         state.busVehicleLayer?.clearLayers();
         state.busStopLayer?.clearLayers();
@@ -2706,27 +2707,28 @@
         state.loadedBusStopCityCode = null;
         state.lastRoadPayload = null;
         state.lastTrafficPayload = null;
-        state.lastBikePayload = null;
-        state.lastBikeDatasetKey = null;
         state.loadedParkingCityCode = null;
-        state.loadedBikeCityCode = null;
       }
-      const requestSignals = {};
-      const beginRequest = (layerKey) => {
-        const controller = new AbortController();
-        state.transportAbortControllers[layerKey] = controller;
-        requestSignals[layerKey] = controller.signal;
-        return controller.signal;
+      state.transportAbortController = new AbortController();
+      const signal = state.transportAbortController.signal;
+      const viewportRadius = Math.ceil(state.map.distance(state.map.getCenter(), state.map.getBounds().getNorthEast()));
+      const bounds = state.map.getBounds();
+      const roadParameters = {
+        south: Math.max(TAIWAN_BOUNDS[0][0], bounds.getSouth()),
+        west: Math.max(TAIWAN_BOUNDS[0][1], bounds.getWest()),
+        north: Math.min(TAIWAN_BOUNDS[1][0], bounds.getNorth()),
+        east: Math.min(TAIWAN_BOUNDS[1][1], bounds.getEast()),
+        zoom: state.map.getZoom()
       };
       const busParameters = { lat, lng, city: cityCode, radius: Math.min(50000, Math.max(1000, viewportRadius)) };
       const tasks = [];
       let busRequest = null;
+      let roadsRequest = null;
       let trafficRequest = null;
       let bikeRequest = null;
       let parkingRequest = null;
 
       if (shouldLoadBus) {
-        const signal = beginRequest('bus');
         busRequest = fetchOfficialData('/api/tdx/bus', busParameters, signal);
         tasks.push({ key: 'bus', promise: busRequest });
         busRequest.then((payload) => {
@@ -2749,24 +2751,46 @@
         busLayerCompletion.finally(() => finishLoading('bus'));
       }
 
+      if (shouldLoadRoads) {
+        roadsRequest = fetchOfficialData('/api/map/roads', roadParameters, signal);
+        tasks.push({ key: 'roads', promise: roadsRequest });
+        roadsRequest.then((payload) => {
+          if (signal.aborted) return;
+          state.lastRoadPayload = payload;
+          state.lastTransportFetch.roads = { lat, lng, at: Date.now(), zoom: state.map.getZoom() };
+        }).catch((error) => {
+          if (error.name !== 'AbortError') console.error('OpenStreetMap 道路圖層讀取失敗：', error);
+        });
+      }
+
       if (shouldLoadTraffic) {
-        const signal = beginRequest('traffic');
         trafficRequest = fetchOfficialData('/api/tdx/traffic', {
-          lat, lng, city: cityCode, radius: trafficRadius
+          lat, lng, city: cityCode, radius: Math.min(30000, Math.max(1000, viewportRadius))
         }, signal);
         tasks.push({ key: 'traffic', promise: trafficRequest });
         trafficRequest.then((payload) => {
           if (signal.aborted) return;
           state.lastTrafficPayload = payload;
-          state.lastTransportFetch.traffic = { lat, lng, radius: trafficRadius, at: Date.now() };
-          renderTrafficLayer(payload);
+          state.lastTransportFetch.traffic = { lat, lng, at: Date.now() };
         }).catch((error) => {
           if (error.name !== 'AbortError') console.error('TDX 即時路況讀取失敗：', error);
+        });
+      }
+
+      if (shouldLoadRoads || shouldLoadTraffic) {
+        Promise.allSettled([
+          roadsRequest || Promise.resolve(state.lastRoadPayload || { data: { roads: [] } }),
+          trafficRequest || Promise.resolve(state.lastTrafficPayload || { data: { roads: [] } })
+        ]).then(([roadsResult, trafficResult]) => {
+          if (signal.aborted) return;
+          renderTrafficLayer(
+            roadsResult.status === 'fulfilled' ? roadsResult.value : (state.lastRoadPayload || { data: { roads: [] } }),
+            trafficResult.status === 'fulfilled' ? trafficResult.value : (state.lastTrafficPayload || { data: { roads: [] } })
+          );
         }).finally(() => finishLoading('traffic'));
       }
 
       if (shouldLoadBike) {
-        const signal = beginRequest('bike');
         bikeRequest = fetchOfficialData('/api/tdx/bike', { lat, lng, city: cityCode }, signal);
         tasks.push({ key: 'bike', promise: bikeRequest });
         bikeRequest.then((payload) => {
@@ -2779,7 +2803,6 @@
       }
 
       if (shouldLoadParking) {
-        const signal = beginRequest('parking');
         parkingRequest = fetchOfficialData('/api/tdx/parking', {
           lat, lng, city: cityCode, radius: Math.min(50000, Math.max(1000, viewportRadius))
         }, signal);
@@ -2794,11 +2817,7 @@
       }
 
       const results = await Promise.allSettled(tasks.map((task) => task.promise));
-      Object.entries(requestSignals).forEach(([layerKey, signal]) => {
-        if (state.transportAbortControllers[layerKey]?.signal === signal) {
-          delete state.transportAbortControllers[layerKey];
-        }
-      });
+      if (signal.aborted) return;
       const bikeIndex = tasks.findIndex((task) => task.key === 'bike');
       const bikeResult = bikeIndex >= 0 ? results[bikeIndex] : null;
       const bikeIncomplete = bikeResult?.status === 'fulfilled'
@@ -4224,7 +4243,7 @@
         populateJourneyStationCities();
         renderJourneyStationOptions();
         if (state.journeyMode !== 'tra') {
-          showJourneyStatus(`已載入 ${state.journeyStations.length} 個站點；固定資料每日由伺服器更新。`);
+          showJourneyStatus(`已載入 ${state.journeyStations.length} 個站點；固定資料每 5 分鐘由伺服器更新。`);
         }
       } catch (error) {
         if (error.name !== 'AbortError') {
@@ -5315,7 +5334,7 @@
 
     function isolateMapForJourneyFocus(label) {
       state.transportDataSuspended = true;
-      abortTransportRequests();
+      state.transportAbortController?.abort();
       window.clearTimeout(state.transportRefreshTimer);
       const visibility = { transport: {}, auxiliary: {}, markers: {} };
       Object.entries(state.transportLayers || {}).forEach(([key, layer]) => {
@@ -5975,36 +5994,6 @@
       }
     }
 
-    function startActiveVisitorHeartbeat() {
-      if (!/^https?:$/.test(window.location.protocol)) return;
-      const sessionKey = 'portal-active-session-id';
-      const createSessionId = () => window.crypto?.randomUUID?.()
-        || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
-          const random = Math.floor(Math.random() * 16);
-          return (character === 'x' ? random : (random & 3) | 8).toString(16);
-        });
-      let sessionId = '';
-      try {
-        sessionId = sessionStorage.getItem(sessionKey) || createSessionId();
-        sessionStorage.setItem(sessionKey, sessionId);
-      } catch (error) {
-        sessionId = createSessionId();
-        console.warn('無法保存網站工作階段 ID，將使用暫時 ID：', error);
-      }
-      const endpoint = new URL('/api/presence', API_BASE_URL);
-      const heartbeat = (active = true, keepalive = false) => fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ sessionId, active }),
-        keepalive
-      }).then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      }).catch((error) => console.warn('網站使用狀態回報失敗：', error));
-      heartbeat();
-      window.setInterval(() => heartbeat(), 30_000);
-      window.addEventListener('pagehide', () => heartbeat(false, true), { once: true });
-    }
-
     try {
       bindEventListeners();
     } catch (error) {
@@ -6023,7 +6012,6 @@
 
     // 設定檔載入後自動定位；失敗或位置超出臺灣範圍時一律回到台北 101。
     window.addEventListener('load', () => {
-      startActiveVisitorHeartbeat();
       runInitializationStep('設定檔', loadConfig);
       runInitializationStep('定位', requestUserLocation);
       refreshPublicServiceStatus().catch((error) => console.error('服務狀態讀取失敗：', error));

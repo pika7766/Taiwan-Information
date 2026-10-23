@@ -53,33 +53,28 @@ const JOURNEY_GRAPH_MAX_STALE_MS = Math.max(
   60 * 60 * 1000,
   Number(process.env.JOURNEY_GRAPH_MAX_STALE_MS) || 24 * 60 * 60 * 1000
 );
-const TDX_REFRESH_INTERVAL_MS = Math.max(1_000, Number(process.env.TDX_REFRESH_INTERVAL_MS) || 12_000);
+const TDX_REFRESH_INTERVAL_MS = Math.max(1_000, Number(process.env.TDX_REFRESH_INTERVAL_MS) || 5_000);
 const TDX_DYNAMIC_REFRESH_INTERVAL_MS = Math.max(
   1_000,
   Number(process.env.TDX_DYNAMIC_REFRESH_INTERVAL_MS) || 12 * 1000
 );
-const TDX_MOBILITY_REFRESH_INTERVAL_MS = Math.max(
-  30 * 60 * 1000,
-  Number(process.env.TDX_MOBILITY_REFRESH_INTERVAL_MS) || 30 * 60 * 1000
-);
 const TDX_STATIC_REFRESH_INTERVAL_MS = Math.max(
-  24 * 60 * 60 * 1000,
-  Number(process.env.TDX_STATIC_REFRESH_INTERVAL_MS) || 24 * 60 * 60 * 1000
+  TDX_DYNAMIC_REFRESH_INTERVAL_MS,
+  Number(process.env.TDX_STATIC_REFRESH_INTERVAL_MS) || 5 * 60 * 1000
 );
 const JOURNEY_STATIC_REFRESH_INTERVAL_MS = TDX_STATIC_REFRESH_INTERVAL_MS;
 const JOURNEY_LIVE_REFRESH_INTERVAL_MS = TDX_DYNAMIC_REFRESH_INTERVAL_MS;
-const TDX_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const JOURNEY_GRAPH_ACTIVE_WINDOW_MS = Math.max(
-  TDX_IDLE_TIMEOUT_MS,
-  Number(process.env.JOURNEY_GRAPH_ACTIVE_WINDOW_MS) || TDX_IDLE_TIMEOUT_MS
+  JOURNEY_STATIC_REFRESH_INTERVAL_MS * 3,
+  Number(process.env.JOURNEY_GRAPH_ACTIVE_WINDOW_MS) || 30 * 60 * 1000
 );
 const JOURNEY_BOOKING_WINDOW_DAYS = Math.min(
   60,
   Math.max(1, Number(process.env.JOURNEY_BOOKING_WINDOW_DAYS) || 28)
 );
 const TDX_ACTIVE_CACHE_WINDOW_MS = Math.max(
-  TDX_IDLE_TIMEOUT_MS,
-  Number(process.env.TDX_ACTIVE_CACHE_WINDOW_MS) || TDX_IDLE_TIMEOUT_MS
+  TDX_REFRESH_INTERVAL_MS * 3,
+  Number(process.env.TDX_ACTIVE_CACHE_WINDOW_MS) || 30_000
 );
 const TDX_RATE_LIMIT_COOLDOWN_MS = Math.max(
   TDX_REFRESH_INTERVAL_MS,
@@ -114,7 +109,6 @@ const CWA_DISTRICT_ALIASES = {
   臺北市: { 興雅: '信義區', 三張犁: '信義區', 西村里: '信義區' }
 };
 const TDX_API_ROOT = process.env.TDX_API_ROOT || 'https://tdx.transportdata.tw/api/basic';
-const TDX_MAX_PAGE_SIZE = 1_000;
 const TDX_CITY_BY_PORTAL_CODE = {
   Taipei: 'Taipei', NewTaipei: 'NewTaipei', Keelung: 'Keelung', Taoyuan: 'Taoyuan',
   HsinchuCity: 'Hsinchu', HsinchuCounty: 'HsinchuCounty', Miaoli: 'MiaoliCounty', Taichung: 'Taichung',
@@ -123,19 +117,6 @@ const TDX_CITY_BY_PORTAL_CODE = {
   Yilan: 'YilanCounty', Hualien: 'HualienCounty', Taitung: 'TaitungCounty', Penghu: 'PenghuCounty',
   Kinmen: 'KinmenCounty', Matsu: 'LienchiangCounty'
 };
-const TDX_TRAFFIC_SECTION_CITIES = new Set([
-  'YilanCounty', 'HsinchuCounty', 'ChanghuaCounty', 'YunlinCounty', 'PingtungCounty',
-  'Keelung', 'Taipei', 'Kaohsiung', 'NewTaipei', 'Taichung', 'Tainan', 'Taoyuan'
-]);
-const TDX_TRAFFIC_LIVE_CITIES = new Set([
-  'YilanCounty', 'ChanghuaCounty', 'YunlinCounty', 'PingtungCounty',
-  'Keelung', 'Taipei', 'Taichung', 'Tainan', 'Taoyuan'
-]);
-const TDX_BIKE_CITIES = new Set([
-  'Taichung', 'Hsinchu', 'MiaoliCounty', 'ChanghuaCounty', 'NewTaipei', 'YunlinCounty',
-  'ChiayiCounty', 'PingtungCounty', 'TaitungCounty', 'Taoyuan', 'Taipei', 'Kaohsiung',
-  'Tainan', 'Chiayi', 'HsinchuCounty'
-]);
 const METRO_SYSTEM_LABELS = {
   TRTC: '臺北捷運', KRTC: '高雄捷運', KLRT: '高雄輕軌', TYMC: '桃園捷運',
   TMRT: '臺中捷運', NTMC: '新北捷運', NTDLRT: '淡海輕軌', NTALRT: '安坑輕軌'
@@ -267,13 +248,7 @@ let nationwideBusSnapshot = {
   nextSourceIndex: 0
 };
 let nationwideBusRefreshPromise = null;
-let nationwideBusRefreshAt = 0;
-let nationwideMobilityRefreshPromise = null;
-let nationwideMobilityRefreshAt = 0;
-let nationwideTransitRefreshPromise = null;
-let nationwideTransitRefreshAt = 0;
-let nationwideMobilityCityCursor = 0;
-let nationwideTransitScopeCursor = 0;
+let nationwideBusRefreshTimer = null;
 try {
   const cachedBikePayload = JSON.parse(fs.readFileSync(BIKE_STATION_CACHE_FILE, 'utf8'));
   const cachedBikeStations = Array.isArray(cachedBikePayload) ? cachedBikePayload : cachedBikePayload.data;
@@ -306,10 +281,6 @@ try {
 }
 const tdxResponseCache = new Map();
 const roadNetworkCache = new Map();
-let lastTdxUserActivityAt = 0;
-const activeVisitorSessions = new Map();
-const ACTIVE_VISITOR_TTL_MS = 90_000;
-const ACTIVE_VISITOR_LOG_INTERVAL_MS = 60_000;
 const geocodeSearchCache = new Map();
 const routePlannerCache = new Map();
 const routePlannerResultCache = new Map();
@@ -330,6 +301,7 @@ let journeyGraphDiskCache = {
 };
 let journeyGraphPersistTimer = null;
 let journeyGraphPersistPromise = null;
+let journeyGraphRefreshTimer = null;
 const TDX_RESPONSE_CACHE_MS = TDX_DYNAMIC_REFRESH_INTERVAL_MS;
 let tdxRequestQueue = Promise.resolve();
 let lastTdxRequestAt = 0;
@@ -351,15 +323,6 @@ function resolveTdxPriority(options = {}) {
 function runWithTdxPriority(priority, task) {
   return tdxPriorityStorage.run(priority, task);
 }
-
-function hasRecentTdxDemand(now = Date.now()) {
-  return lastTdxUserActivityAt > 0 && now - lastTdxUserActivityAt < TDX_IDLE_TIMEOUT_MS;
-}
-
-function recordTdxUserActivity() {
-  lastTdxUserActivityAt = Date.now();
-}
-
 let tdxCacheRefreshPromise = null;
 let tdxCacheRefreshTimer = null;
 const adminSessions = new Map();
@@ -559,13 +522,9 @@ function sendJson(response, status, payload, extraHeaders = {}) {
 function sendApiError(response, error) {
   const status = error instanceof UpstreamError ? error.status : 500;
   const message = status === 429 ? '請求過多，請稍後再試' : error.message;
-  const upstreamDetails = error instanceof UpstreamError ? String(error.details || '').slice(0, 500) : '';
-  console.error('API request failed:', error, upstreamDetails ? `Upstream response: ${upstreamDetails}` : '');
+  console.error('API request failed:', error);
   try {
-    fs.appendFileSync(
-      path.join(ROOT, 'server-error.log'),
-      `${new Date().toISOString()} API request failed: ${error.stack || error.message}${upstreamDetails ? `\nUpstream response: ${upstreamDetails}` : ''}\n`
-    );
+    fs.appendFileSync(path.join(ROOT, 'server-error.log'), `${new Date().toISOString()} API request failed: ${error.stack || error.message}\n`);
   } catch (e) {
     // ignore
   }
@@ -599,61 +558,6 @@ function constantTimeEqual(actual, expected) {
 function requestIp(request) {
   return String(request.headers['x-forwarded-for'] || request.socket.remoteAddress || '')
     .split(',')[0].trim();
-}
-
-async function handleActiveVisitorHeartbeat(request, response) {
-  try {
-    const origin = request.headers.origin;
-    const requestHost = String(request.headers.host || '').trim();
-    if (!origin) throw new UpstreamError('Visitor heartbeat origin is required', 403);
-    let originHost;
-    try {
-      originHost = new URL(origin).host;
-    } catch {
-      throw new UpstreamError('Invalid visitor heartbeat origin', 400);
-    }
-    if (originHost !== requestHost) {
-      throw new UpstreamError('Cross-origin visitor heartbeat is not allowed', 403);
-    }
-    const { parsed } = await readJsonBody(request);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
-      || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(parsed.sessionId || '')
-      || typeof parsed.active !== 'boolean') {
-      throw new UpstreamError('A valid sessionId and boolean active flag are required', 400);
-    }
-    const sessionId = parsed.sessionId.toLowerCase();
-    const ip = requestIp(request).replace(/[\r\n]/g, '') || 'unknown';
-    const current = activeVisitorSessions.get(sessionId);
-    if (parsed.active === false) {
-      if (current?.ip === ip) activeVisitorSessions.delete(sessionId);
-    } else {
-      activeVisitorSessions.set(sessionId, { ip, lastSeenAt: Date.now() });
-    }
-    sendJson(response, 200, { success: true });
-  } catch (error) {
-    sendApiError(response, error);
-  }
-}
-
-function expireActiveVisitorSessions(now = Date.now()) {
-  activeVisitorSessions.forEach((session, sessionId) => {
-    if (now - session.lastSeenAt >= ACTIVE_VISITOR_TTL_MS) {
-      activeVisitorSessions.delete(sessionId);
-    }
-  });
-}
-
-function logActiveVisitorSessions() {
-  expireActiveVisitorSessions();
-  const sessions = [...activeVisitorSessions.values()];
-  const ips = sessions.map((session) => session.ip);
-  console.log(`[active-visitors] ${new Date().toISOString()} sessions=${sessions.length} ips=[${ips.join(', ')}]`);
-}
-
-function startActiveVisitorLogging() {
-  logActiveVisitorSessions();
-  const timer = setInterval(logActiveVisitorSessions, ACTIVE_VISITOR_LOG_INTERVAL_MS);
-  timer.unref?.();
 }
 
 function parseCookies(request) {
@@ -1408,14 +1312,11 @@ function tdxCityUrl(pathname, city, parameters = {}) {
 }
 
 function tdxRefreshIntervalForUrl(url) {
-  const mobilityPath = [
-    /\/Road\/Traffic\/Live\//,
-    /\/Bike\/Availability\//,
-    /\/Parking\/.*ParkingAvailability\//
-  ].some((pattern) => pattern.test(url.pathname));
-  if (mobilityPath) return TDX_MOBILITY_REFRESH_INTERVAL_MS;
   const dynamicPath = [
     /\/Bus\/(?:RealTimeByFrequency|RealTimeNearStop|EstimatedTimeOfArrival)\//,
+    /\/Bike\/Availability\//,
+    /\/Parking\/.*ParkingAvailability\//,
+    /\/Road\/Traffic\/Live\//,
     /\/Rail\/TRA\/TrainLiveBoard(?:\/|$)/,
     /\/Rail\/Metro\/(?:LiveBoard|LivePosition)\//
   ].some((pattern) => pattern.test(url.pathname));
@@ -1429,17 +1330,11 @@ function queueTdxRequest(task, options = {}) {
     if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
     lastTdxRequestAt = Date.now();
     return task();
-  }, {
-    maxAttempts: options.maxAttempts,
-    shouldRetry: options.shouldRetry
-  });
+  }, { maxAttempts: options.maxAttempts });
 }
 
 async function requestTdxUrl(url, options = {}) {
   if (!tdxFetchingEnabled) throw new UpstreamError('管理員已關閉運輸資訊', 503);
-  if (options.backgroundRefresh && !hasRecentTdxDemand()) {
-    throw new UpstreamError('TDX background refresh paused because no user activity was detected', 503);
-  }
   if (!tdxCredential) throw new UpstreamError('TDX credential is not configured', 503);
   if (isTdxPaused()) throw new UpstreamError('TDX queue is paused due to rate limits', 429);
 
@@ -1465,16 +1360,10 @@ async function requestTdxUrl(url, options = {}) {
       if (!tdxFetchingEnabled) {
         throw new UpstreamError('管理員已關閉運輸資訊', 503);
       }
-      if (options.backgroundRefresh && !hasRecentTdxDemand()) {
-        throw new UpstreamError('TDX background refresh paused because no user activity was detected', 503);
-      }
       return fetchJson(url, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
       }, 60_000);
-    }, {
-      maxAttempts: 2,
-      shouldRetry: (error) => error instanceof TypeError
-    });
+    }, { maxAttempts: 1 });
     return data;
   } catch (error) {
     if (error.status === 429) {
@@ -1489,52 +1378,11 @@ async function requestTdxUrl(url, options = {}) {
   }
 }
 
-function tdxFailureDescription(error) {
-  const details = String(error?.details || '').trim();
-  return details ? `${error.message}; upstream: ${details.slice(0, 500)}` : error.message;
-}
-
-async function requestTdxUrlPaginated(url, options = {}) {
-  const requestedTop = Number(url.searchParams.get('$top'));
-  if (!Number.isFinite(requestedTop) || requestedTop <= TDX_MAX_PAGE_SIZE) {
-    return requestTdxUrl(url, options);
-  }
-
-  const initialSkip = Math.max(0, Number(url.searchParams.get('$skip')) || 0);
-  let arrayKey = null;
-  let firstPayload = null;
-  const items = [];
-  for (let offset = 0; offset < requestedTop; offset += TDX_MAX_PAGE_SIZE) {
-    const pageSize = Math.min(TDX_MAX_PAGE_SIZE, requestedTop - offset);
-    const pageUrl = new URL(url);
-    pageUrl.searchParams.set('$top', String(pageSize));
-    pageUrl.searchParams.set('$skip', String(initialSkip + offset));
-    const page = await requestTdxUrl(pageUrl, options);
-    if (!Array.isArray(page) && (!page || typeof page !== 'object')) {
-      throw new UpstreamError('TDX paginated response was not an array', 502);
-    }
-    if (firstPayload === null) {
-      firstPayload = page;
-      if (!Array.isArray(page)) {
-        arrayKey = Object.keys(page).find((key) => Array.isArray(page[key]));
-        if (!arrayKey) return page;
-      }
-    }
-    const pageItems = Array.isArray(page) ? page : page[arrayKey];
-    if (!Array.isArray(pageItems)) {
-      throw new UpstreamError('TDX paginated response shape changed between pages', 502);
-    }
-    items.push(...pageItems);
-    if (pageItems.length < pageSize) break;
-  }
-  return Array.isArray(firstPayload) ? items : { ...firstPayload, [arrayKey]: items };
-}
-
 async function refreshTdxCacheEntry(entry, options = {}) {
   if (entry.pending) return entry.pending;
   entry.pending = (async () => {
     const priority = resolveTdxPriority({ ...options, backgroundRefresh: entry.backgroundRefresh });
-    const data = await requestTdxUrlPaginated(entry.url, { priority, backgroundRefresh: true });
+    const data = await requestTdxUrl(entry.url, { priority });
     entry.data = data;
     entry.updatedAt = Date.now();
     entry.expiresAt = entry.updatedAt + entry.refreshIntervalMs;
@@ -1596,7 +1444,7 @@ async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
 }
 
 async function refreshActiveTdxCache() {
-  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return [];
+  if (!tdxFetchingEnabled) return [];
   if (isTdxPaused()) {
     console.warn('Skipping active TDX cache refresh because TDX queue is paused');
     return [];
@@ -1605,7 +1453,10 @@ async function refreshActiveTdxCache() {
   const now = Date.now();
   const entries = [...tdxResponseCache.values()]
     .filter((entry) => entry.backgroundRefresh
-      && entry.lastAccessAt >= now - TDX_ACTIVE_CACHE_WINDOW_MS
+      && entry.lastAccessAt >= now - Math.max(
+        TDX_ACTIVE_CACHE_WINDOW_MS,
+        entry.refreshIntervalMs + TDX_REFRESH_INTERVAL_MS * 2
+      )
       && now >= entry.updatedAt + entry.refreshIntervalMs);
   if (!entries.length) return [];
 
@@ -1618,7 +1469,6 @@ async function refreshActiveTdxCache() {
 
 function startTdxCacheRefresh() {
   tdxCacheRefreshTimer = setInterval(() => {
-    if (!hasRecentTdxDemand()) return;
     if (isTdxPaused()) {
       console.warn('Skipping TDX shared cache refresh; TDX queue is paused');
       return;
@@ -1627,164 +1477,12 @@ function startTdxCacheRefresh() {
     const resumedMs = Date.now() - tdxRequestPausedUntil;
     if (resumedMs >= 0 && resumedMs < 30_000) {
       const jitter = Math.floor(Math.random() * 30_000);
-      setTimeout(() => runDemandDrivenTdxRefreshes(), jitter);
+      setTimeout(() => refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message)), jitter);
       return;
     }
-    runDemandDrivenTdxRefreshes();
+    refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message));
   }, TDX_REFRESH_INTERVAL_MS);
   tdxCacheRefreshTimer.unref?.();
-}
-
-function nationwideMobilityCities() {
-  return [...new Map(Object.entries(TDX_CITY_BY_PORTAL_CODE)
-    .map(([portalCityCode, tdxCity]) => [tdxCity, { portalCityCode, tdxCity }])).values()];
-}
-
-async function refreshNationwideMobilityCaches() {
-  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return;
-  if (nationwideMobilityRefreshPromise) return nationwideMobilityRefreshPromise;
-  const cities = nationwideMobilityCities();
-  nationwideMobilityRefreshPromise = (async () => {
-    while (nationwideMobilityCityCursor < cities.length && hasRecentTdxDemand() && !isTdxPaused()) {
-      const { tdxCity } = cities[nationwideMobilityCityCursor];
-      const parameters = { '$top': 10_000 };
-      const requests = [];
-      if (TDX_TRAFFIC_SECTION_CITIES.has(tdxCity)) {
-        requests.push({
-          label: 'road-sections',
-          promise: fetchTdxCity('v2/Road/Traffic/Section/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
-        }, {
-          label: 'road-section-shapes',
-          promise: fetchTdxCity('v2/Road/Traffic/SectionShape/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
-        });
-      }
-      if (TDX_TRAFFIC_LIVE_CITIES.has(tdxCity)) {
-        requests.push({
-          label: 'road-live-traffic',
-          promise: fetchTdxCity('v2/Road/Traffic/Live/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
-        });
-      }
-      if (TDX_BIKE_CITIES.has(tdxCity)) {
-        requests.push({
-          label: 'bike-stations',
-          promise: fetchTdxCity('v2/Bike/Station/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
-        }, {
-          label: 'bike-availability',
-          promise: fetchTdxCity('v2/Bike/Availability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
-        });
-      }
-      requests.push({
-        label: 'parking-lots',
-        promise: fetchTdxCity('v1/Parking/OffStreet/CarPark/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
-      }, {
-        label: 'parking-availability',
-        promise: fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
-      });
-      const results = await Promise.allSettled(requests.map((request) => request.promise));
-      const failed = results.flatMap((result, index) => result.status === 'rejected'
-        ? [{ result, request: requests[index] }]
-        : []);
-      failed.forEach(({ result, request }) => console.error(
-        `Nationwide TDX mobility refresh failed for ${tdxCity} (${request.label}):`,
-        tdxFailureDescription(result.reason)
-      ));
-      if (failed.some(({ result }) => result.reason.status === 429)) break;
-      nationwideMobilityCityCursor += 1;
-    }
-    if (nationwideMobilityCityCursor >= cities.length) {
-      nationwideMobilityCityCursor = 0;
-      nationwideMobilityRefreshAt = Date.now();
-      console.log(
-        `Nationwide TDX mobility cache refresh completed for ${cities.length} city scopes `
-        + `(${TDX_TRAFFIC_SECTION_CITIES.size} road-section, ${TDX_TRAFFIC_LIVE_CITIES.size} live-traffic, `
-        + `${TDX_BIKE_CITIES.size} YouBike-supported cities; parking checked in all scopes)`
-      );
-    }
-  })().finally(() => {
-    nationwideMobilityRefreshPromise = null;
-  });
-  return nationwideMobilityRefreshPromise;
-}
-
-function nationwideTransitScopes() {
-  const bus = [
-    ...Object.entries(TDX_CITY_BY_PORTAL_CODE).map(([portalCityCode, tdxCity]) => ({
-      type: 'bus', portalCityCode, tdxCity, key: tdxCity
-    })),
-    { type: 'bus', portalCityCode: 'InterCity', tdxCity: 'InterCity', key: 'InterCity' }
-  ];
-  const metro = Object.entries(METRO_SYSTEMS_BY_CITY).flatMap(([portalCityCode, systems]) => (
-    systems.map((system) => ({
-      type: 'metro', portalCityCode, system, key: system,
-      scope: { portalCityCode, tdxCity: TDX_CITY_BY_PORTAL_CODE[portalCityCode], system }
-    }))
-  ));
-  const today = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit'
-  }).format(new Date());
-  return [
-    ...bus,
-    { type: 'rail', mode: 'tra', date: today, key: `tra:${today}` },
-    { type: 'rail', mode: 'thsr', date: today, key: `thsr:${today}` },
-    ...metro
-  ];
-}
-
-async function refreshNationwideTransitCaches() {
-  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return;
-  if (nationwideTransitRefreshPromise) return nationwideTransitRefreshPromise;
-  const scopes = nationwideTransitScopes();
-  nationwideTransitRefreshPromise = (async () => {
-    while (nationwideTransitScopeCursor < scopes.length && hasRecentTdxDemand() && !isTdxPaused()) {
-      const scope = scopes[nationwideTransitScopeCursor];
-      try {
-        await runWithTdxPriority('low', async () => {
-          if (scope.type === 'bus') {
-            await refreshBusJourneyNetwork(
-              { portalCityCode: scope.portalCityCode, tdxCity: scope.tdxCity }, scope.key
-            );
-          } else if (scope.type === 'rail') {
-            await refreshRailJourneyNetwork(scope.mode, scope.date, scope.key);
-          } else {
-            await refreshMetroJourneyNetwork(scope.scope, scope.key);
-          }
-        });
-        nationwideTransitScopeCursor += 1;
-      } catch (error) {
-        console.error(`Nationwide ${scope.type} TDX refresh failed for ${scope.key}:`, error.message);
-        if (error.status === 429) break;
-        nationwideTransitScopeCursor += 1;
-      }
-    }
-    if (nationwideTransitScopeCursor >= scopes.length) {
-      nationwideTransitScopeCursor = 0;
-      nationwideTransitRefreshAt = Date.now();
-      console.log(`Nationwide TDX static bus, rail, THSR, and metro data refreshed for ${scopes.length} systems`);
-    }
-  })().finally(() => {
-    nationwideTransitRefreshPromise = null;
-  });
-  return nationwideTransitRefreshPromise;
-}
-
-function runDemandDrivenTdxRefreshes() {
-  if (!tdxFetchingEnabled || !hasRecentTdxDemand() || isTdxPaused()) return;
-  refreshActiveTdxCache().catch((error) => console.error('TDX shared cache refresh failed:', error.message));
-  refreshActiveJourneyGraphs().catch((error) => console.error('Journey graph refresh failed:', error.message));
-
-  const now = Date.now();
-  if (now - nationwideBusRefreshAt >= TDX_DYNAMIC_REFRESH_INTERVAL_MS) {
-    nationwideBusRefreshAt = now;
-    refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
-  }
-  if (!nationwideMobilityRefreshPromise
-    && now - nationwideMobilityRefreshAt >= TDX_MOBILITY_REFRESH_INTERVAL_MS) {
-    refreshNationwideMobilityCaches().catch((error) => console.error('Nationwide mobility refresh failed:', error.message));
-  }
-  if (!nationwideTransitRefreshPromise
-    && now - nationwideTransitRefreshAt >= TDX_STATIC_REFRESH_INTERVAL_MS) {
-    refreshNationwideTransitCaches().catch((error) => console.error('Nationwide transit refresh failed:', error.message));
-  }
 }
 
 async function fetchTdxCity(pathname, city, parameters = {}, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
@@ -2465,53 +2163,13 @@ function parseWktLines(wkt) {
     .filter((line) => line.length >= 2);
 }
 
-function isPolylineWithinRadius(lines, lat, lng, radiusMeters) {
-  const metersPerDegree = Math.PI * 6_371_000 / 180;
-  const longitudeScale = metersPerDegree * Math.cos(lat * Math.PI / 180);
-  return lines.some((line) => line.slice(1).some((point, index) => {
-    const previous = line[index];
-    const x1 = (previous[1] - lng) * longitudeScale;
-    const y1 = (previous[0] - lat) * metersPerDegree;
-    const x2 = (point[1] - lng) * longitudeScale;
-    const y2 = (point[0] - lat) * metersPerDegree;
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const segmentLengthSquared = dx * dx + dy * dy;
-    const projection = segmentLengthSquared
-      ? Math.max(0, Math.min(1, -(x1 * dx + y1 * dy) / segmentLengthSquared))
-      : 0;
-    return Math.hypot(x1 + projection * dx, y1 + projection * dy) <= radiusMeters;
-  }));
-}
-
-function trafficStatus(congestionLevel) {
+function trafficStatus(congestionLevel, speed) {
   const level = Number(congestionLevel);
   if (level === -1) return { key: 'closed', label: '道路封閉' };
-  if (level === -99 || !Number.isFinite(level)) return { key: 'unknown', label: '無即時監測資料' };
+  if (level === -99 || (!Number.isFinite(level) && !Number.isFinite(speed))) return { key: 'unknown', label: '無即時監測資料' };
   if (level >= 3) return { key: 'congested', label: '塞車' };
   if (level >= 2) return { key: 'slow', label: '有點塞車' };
   return { key: 'smooth', label: '順暢行駛' };
-}
-
-function trafficCityScopes(lat, lng, radiusMeters, preferredCity) {
-  const cityBufferMeters = 75_000;
-  const scopes = Object.entries(TDX_CITY_BY_PORTAL_CODE)
-    .map(([portalCityCode, tdxCity]) => ({
-      portalCityCode,
-      tdxCity,
-      center: PORTAL_CONFIG.cities[portalCityCode]?.mapCenter
-    }))
-    .filter((scope) => (
-      TDX_TRAFFIC_SECTION_CITIES.has(scope.tdxCity)
-      && scope.center
-      && haversineMeters(lat, lng, scope.center[0], scope.center[1]) <= radiusMeters + cityBufferMeters
-    ));
-  const uniqueScopes = [...new Map(scopes.map((scope) => [scope.tdxCity, scope])).values()];
-  if (TDX_TRAFFIC_SECTION_CITIES.has(preferredCity)
-    && !uniqueScopes.some((scope) => scope.tdxCity === preferredCity)) {
-    uniqueScopes.push({ portalCityCode: null, tdxCity: preferredCity });
-  }
-  return uniqueScopes;
 }
 
 function mapBusStop(stop, origin = null) {
@@ -2733,7 +2391,7 @@ async function fetchNationwideBusSource(source) {
 }
 
 async function refreshNationwideBusSnapshot() {
-  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return nationwideBusSnapshot;
+  if (!tdxFetchingEnabled) return nationwideBusSnapshot;
   if (isTdxPaused()) {
     console.warn('refreshNationwideBusSnapshot: skipped because TDX queue is paused');
     return nationwideBusSnapshot;
@@ -2780,6 +2438,29 @@ async function refreshNationwideBusSnapshot() {
     nationwideBusRefreshPromise = null;
   });
   return nationwideBusRefreshPromise;
+}
+
+function startNationwideBusRefresh() {
+  // Initial run respects queue pause and staggers immediate resume
+  if (!isTdxPaused()) {
+    refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
+  } else {
+    console.warn('Initial nationwide bus refresh skipped; TDX queue paused');
+  }
+  nationwideBusRefreshTimer = setInterval(() => {
+    if (isTdxPaused()) {
+      console.warn('Skipping nationwide bus refresh; TDX queue paused');
+      return;
+    }
+    const resumedMs = Date.now() - tdxRequestPausedUntil;
+    if (resumedMs >= 0 && resumedMs < 30_000) {
+      const jitter = Math.floor(Math.random() * 30_000);
+      setTimeout(() => refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message)), jitter);
+      return;
+    }
+    refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
+  }, BUS_REFRESH_INTERVAL_MS);
+  nationwideBusRefreshTimer.unref?.();
 }
 
 async function proxyBus(requestUrl, response) {
@@ -2888,7 +2569,6 @@ async function proxyBusStops(requestUrl, response) {
 }
 
 async function fetchBikeCityData(city, origin = null, includeAvailability = true) {
-  if (!TDX_BIKE_CITIES.has(city)) return [];
   const stationsPayload = await fetchTdxCity('v2/Bike/Station/City', city, {
     '$top': 5000
   }, TDX_STATIC_REFRESH_INTERVAL_MS);
@@ -2896,7 +2576,7 @@ async function fetchBikeCityData(city, origin = null, includeAvailability = true
   if (includeAvailability) {
     try {
       availabilityPayload = await fetchTdxCity(
-        'v2/Bike/Availability/City', city, { '$top': 5000 }, TDX_MOBILITY_REFRESH_INTERVAL_MS
+        'v2/Bike/Availability/City', city, { '$top': 5000 }, TDX_DYNAMIC_REFRESH_INTERVAL_MS
       );
     } catch (error) {
       console.error(`TDX ${city} YouBike availability unavailable; station locations are retained:`, error.message);
@@ -2927,39 +2607,13 @@ async function fetchBikeCityData(city, origin = null, includeAvailability = true
   }).filter((item) => item.stationName && Number.isFinite(item.lat) && Number.isFinite(item.lng));
 }
 
-function logMobilityApiResult(layer, outcome, details) {
-  const logger = outcome === 'failure' ? console.error : console.log;
-  logger(`[tdx-${layer}]`, JSON.stringify({ outcome, ...details }));
-}
-
 async function proxyBike(requestUrl, response) {
-  const startedAt = Date.now();
-  let city = requestUrl.searchParams.get('city') || 'unknown';
-  logMobilityApiResult('bike', 'request', { city });
   try {
     await runWithTdxPriority('high', async () => {
       const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-      city = requireTdxCity(requestUrl.searchParams, lat, lng);
-      if (!TDX_BIKE_CITIES.has(city)) {
-        const payload = {
-          success: true,
-          degraded: true,
-          message: `TDX YouBike 站點資料目前未涵蓋 ${city}`,
-          source: '交通部 TDX 公共自行車即時動態',
-          observedAt: new Date().toISOString(),
-          data: []
-        };
-        logMobilityApiResult('bike', 'degraded', {
-          city, reason: 'no-supported-coverage', stations: 0, elapsedMs: Date.now() - startedAt
-        });
-        sendJson(response, 200, payload);
-        return;
-      }
+      const city = requireTdxCity(requestUrl.searchParams, lat, lng);
       const data = (await fetchBikeCityData(city, { lat, lng }))
         .sort((left, right) => left.distanceMeters - right.distanceMeters);
-      logMobilityApiResult('bike', 'success', {
-        city, stations: data.length, elapsedMs: Date.now() - startedAt
-      });
       sendJson(response, 200, {
         success: true,
         source: '交通部 TDX 公共自行車即時動態',
@@ -2982,9 +2636,6 @@ async function proxyBike(requestUrl, response) {
         }))
           .filter((station) => station.distanceMeters <= 30_000)
           .sort((left, right) => left.distanceMeters - right.distanceMeters);
-        logMobilityApiResult('bike', 'degraded', {
-          city, stations: data.length, reason: tdxFailureDescription(error), elapsedMs: Date.now() - startedAt
-        });
         sendJson(response, 200, {
           success: true,
           degraded: true,
@@ -2998,12 +2649,6 @@ async function proxyBike(requestUrl, response) {
         // Fallthrough to sendApiError
       }
     }
-    logMobilityApiResult('bike', 'failure', {
-      city,
-      status: error instanceof UpstreamError ? error.status : 500,
-      error: tdxFailureDescription(error),
-      elapsedMs: Date.now() - startedAt
-    });
     sendApiError(response, error);
   }
 }
@@ -3087,7 +2732,7 @@ async function fetchParkingCityData(city, origin, radiusMeters) {
   }, TDX_STATIC_REFRESH_INTERVAL_MS);
   const availabilityPromise = fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', city, {
     '$top': 10000
-  }, TDX_MOBILITY_REFRESH_INTERVAL_MS).catch((error) => {
+  }, TDX_DYNAMIC_REFRESH_INTERVAL_MS).catch((error) => {
     console.error(`TDX ${city} parking availability unavailable; parking locations are retained:`, error.message);
     return [];
   });
@@ -3133,25 +2778,19 @@ async function fetchParkingCityData(city, origin, radiusMeters) {
 }
 
 async function proxyParking(requestUrl, response) {
-  const startedAt = Date.now();
-  let city = requestUrl.searchParams.get('city') || 'unknown';
-  logMobilityApiResult('parking', 'request', { city });
   try {
     const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    city = requireTdxCity(requestUrl.searchParams, lat, lng);
+    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
     const requestedRadius = Number(requestUrl.searchParams.get('radius'));
     const radiusMeters = Number.isFinite(requestedRadius)
       ? Math.min(50_000, Math.max(1_000, requestedRadius))
       : 10_000;
     const data = await fetchParkingCityData(city, { lat, lng }, radiusMeters);
-    logMobilityApiResult('parking', 'success', {
-      city, lots: data.length, radiusMeters, elapsedMs: Date.now() - startedAt
-    });
     sendJson(response, 200, {
       success: true,
       source: '交通部 TDX 路外停車場與剩餘車位',
       observedAt: new Date().toISOString(),
-      refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
+      refreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
       data
     });
   } catch (error) {
@@ -3162,23 +2801,17 @@ async function proxyParking(requestUrl, response) {
         message: '請求過多，請稍後再試；目前暫無停車場即時資料',
         source: '交通部 TDX 停車場降級模式',
         observedAt: new Date().toISOString(),
-        refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
+        refreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
         data: []
       });
       return;
     }
-    logMobilityApiResult('parking', 'failure', {
-      city,
-      status: error instanceof UpstreamError ? error.status : 500,
-      error: tdxFailureDescription(error),
-      elapsedMs: Date.now() - startedAt
-    });
     sendApiError(response, error);
   }
 }
 
 async function proxyRoadNetwork(requestUrl, response) {
-  // 舊的獨立道路底圖 API 不再使用；即時路況線形由 TDX 的 /api/tdx/traffic 提供。
+  // 即時路況/道路線形功能已暫時停用，不向 Overpass API 或任何外部服務發送請求
   sendJson(response, 200, {
     success: false,
     message: '此功能暫不開放，造成不便敬請見諒。'
@@ -3186,144 +2819,11 @@ async function proxyRoadNetwork(requestUrl, response) {
 }
 
 async function proxyTraffic(requestUrl, response) {
-  const startedAt = Date.now();
-  let preferredCity = requestUrl.searchParams.get('city') || 'unknown';
-  let radiusMeters = null;
-  console.log('[tdx-traffic]', JSON.stringify({
-    outcome: 'request',
-    city: preferredCity,
-    radiusMeters: requestUrl.searchParams.get('radius') || null
-  }));
-  try {
-    const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    preferredCity = requireTdxCity(requestUrl.searchParams, lat, lng);
-    const requestedRadius = Number(requestUrl.searchParams.get('radius'));
-    radiusMeters = Number.isFinite(requestedRadius)
-      ? Math.min(500_000, Math.max(1_000, requestedRadius))
-      : 5_000;
-    const parameters = { '$top': 10_000 };
-    const cityScopes = trafficCityScopes(lat, lng, radiusMeters, preferredCity);
-    if (!cityScopes.length) {
-      const payload = {
-        success: true,
-        degraded: true,
-        message: `TDX 即時路況目前沒有涵蓋 ${preferredCity} 的道路資料`,
-        source: '交通部 TDX 即時路況',
-        observedAt: new Date().toISOString(),
-        refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
-        data: { roads: [], cities: [] }
-      };
-      console.log('[tdx-traffic]', JSON.stringify({
-        outcome: 'degraded',
-        city: preferredCity,
-        radiusMeters,
-        roads: 0,
-        reason: 'no-supported-coverage',
-        elapsedMs: Date.now() - startedAt
-      }));
-      sendJson(response, 200, payload);
-      return;
-    }
-    const cityResults = await Promise.all(cityScopes.map(async (scope) => {
-      const liveSupported = TDX_TRAFFIC_LIVE_CITIES.has(scope.tdxCity);
-      const [sectionsResult, shapesResult, liveResult] = await Promise.allSettled([
-        fetchTdxCity('v2/Road/Traffic/Section/City', scope.tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
-        fetchTdxCity('v2/Road/Traffic/SectionShape/City', scope.tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
-        liveSupported
-          ? fetchTdxCity('v2/Road/Traffic/Live/City', scope.tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS)
-          : Promise.resolve([])
-      ]);
-      const failed = [sectionsResult, shapesResult].find((result) => result.status === 'rejected');
-      if (failed) return { scope, error: failed.reason };
-      return {
-        scope,
-        sectionsPayload: sectionsResult.value,
-        shapesPayload: shapesResult.value,
-        livePayload: liveResult.status === 'fulfilled' ? liveResult.value : [],
-        liveError: liveResult.status === 'rejected' ? liveResult.reason : null,
-        liveSupported
-      };
-    }));
-    const availableResults = cityResults.filter((result) => !result.error);
-    if (!availableResults.length) {
-      throw cityResults.find((result) => result.scope.tdxCity === preferredCity)?.error
-        || cityResults[0]?.error
-        || new UpstreamError('TDX traffic data is unavailable for the requested area', 502);
-    }
-    const unavailableCities = cityResults.filter((result) => result.error).map((result) => result.scope.tdxCity);
-    unavailableCities.forEach((city) => {
-      const result = cityResults.find((item) => item.scope.tdxCity === city);
-      console.error(`[tdx-traffic-source] failure city=${city} source=road-sections-or-shapes:`, tdxFailureDescription(result.error));
-    });
-    const liveUnavailableCities = cityResults
-      .filter((result) => !result.error && (!result.liveSupported || result.liveError))
-      .map((result) => result.scope.tdxCity);
-    cityResults.filter((result) => !result.error && result.liveError).forEach((result) => {
-      console.error(`[tdx-traffic-source] failure city=${result.scope.tdxCity} source=live-traffic:`, tdxFailureDescription(result.liveError));
-    });
-    const roads = cityResults.flatMap((result) => {
-      if (result.error) return [];
-      const sections = asArray(result.sectionsPayload, ['Sections']);
-      const shapes = asArray(result.shapesPayload, ['SectionShapes']);
-      const liveItems = asArray(result.livePayload, ['LiveTraffics']);
-      const sectionById = new Map(sections.map((section) => [String(section.SectionID), section]));
-      const liveById = new Map(liveItems.map((item) => [String(item.SectionID), item]));
-      return shapes.map((shape) => {
-        const lines = parseWktLines(shape.Geometry);
-        if (!lines.length || !isPolylineWithinRadius(lines, lat, lng, radiusMeters)) return null;
-        const section = sectionById.get(String(shape.SectionID)) || {};
-        const live = liveById.get(String(shape.SectionID)) || {};
-        const speed = Number(live.TravelSpeed);
-        const status = trafficStatus(live.CongestionLevel);
-        return {
-          sectionId: shape.SectionID,
-          roadName: section.RoadName || section.SectionName || String(shape.SectionID || '未命名路段'),
-          sectionName: section.SectionName || '',
-          lines,
-          speed: Number.isFinite(speed) && speed >= 0 ? speed : null,
-          congestionLevel: live.CongestionLevel ?? null,
-          status: status.key,
-          statusLabel: status.label,
-          updateTime: live.DataCollectTime || result.livePayload?.UpdateTime || null
-        };
-      }).filter(Boolean);
-    });
-    const degraded = unavailableCities.length > 0 || liveUnavailableCities.length > 0;
-    const messageParts = [];
-    if (unavailableCities.length) messageParts.push(`部分縣市道路資料暫時無法取得：${unavailableCities.join('、')}`);
-    if (liveUnavailableCities.length) messageParts.push(`部分縣市沒有 TDX 即時路況資料：${liveUnavailableCities.join('、')}`);
-    console.log('[tdx-traffic]', JSON.stringify({
-      outcome: degraded ? 'degraded' : 'success',
-      city: preferredCity,
-      cities: cityScopes.map((scope) => scope.tdxCity),
-      roads: roads.length,
-      unavailableCities,
-      liveUnavailableCities,
-      radiusMeters,
-      elapsedMs: Date.now() - startedAt
-    }));
-    sendJson(response, 200, {
-      success: true,
-      degraded,
-      unavailableCities,
-      liveUnavailableCities,
-      message: messageParts.length ? messageParts.join('；') : null,
-      source: '交通部 TDX 道路路段、路段線形與即時路況',
-      observedAt: new Date().toISOString(),
-      refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
-      data: { roads, cities: cityScopes.map((scope) => scope.tdxCity) }
-    });
-  } catch (error) {
-    console.error('[tdx-traffic]', JSON.stringify({
-      outcome: 'failure',
-      city: preferredCity,
-      radiusMeters,
-      status: error instanceof UpstreamError ? error.status : 500,
-      error: tdxFailureDescription(error),
-      elapsedMs: Date.now() - startedAt
-    }));
-    sendApiError(response, error);
-  }
+  // 即時路況功能已暫時停用，不向 TDX 或任何外部服務發送請求
+  sendJson(response, 200, {
+    success: false,
+    message: '此功能暫不開放，造成不便敬請見諒。'
+  });
 }
 
 const JOURNEY_MODE_LABELS = { bus: '公車', tra: '臺鐵', thsr: '高鐵', metro: '捷運' };
@@ -5172,7 +4672,7 @@ async function searchMetroJourneys(scope, originId, destinationId, departure, op
 }
 
 async function refreshActiveJourneyGraphs() {
-  if (!tdxFetchingEnabled || !hasRecentTdxDemand()) return [];
+  if (!tdxFetchingEnabled) return [];
   const now = Date.now();
   const isDue = (entry) => entry.network
     && entry.lastAccessAt >= now - JOURNEY_GRAPH_ACTIVE_WINDOW_MS
@@ -5188,6 +4688,15 @@ async function refreshActiveJourneyGraphs() {
     if (isDue(entry)) tasks.push(refreshMetroJourneyNetwork(entry.scope, cacheKey));
   });
   return Promise.allSettled(tasks);
+}
+
+function startJourneyGraphRefresh() {
+  journeyGraphRefreshTimer = setInterval(() => {
+    refreshActiveJourneyGraphs().catch((error) => {
+      console.error('Journey graph refresh failed:', error.message);
+    });
+  }, JOURNEY_STATIC_REFRESH_INTERVAL_MS);
+  journeyGraphRefreshTimer.unref?.();
 }
 
 async function proxyJourneyOptions(requestUrl, response) {
@@ -7007,22 +6516,6 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(204, corsHeaders()).end();
     return;
   }
-  if (request.method === 'GET'
-    && (requestUrl.pathname.startsWith('/api/tdx/') || requestUrl.pathname === '/api/route/planner')) {
-    recordTdxUserActivity();
-    if (nationwideBusSnapshot.updateSequence === 0 && !nationwideBusRefreshPromise) {
-      nationwideBusRefreshAt = Date.now();
-      setImmediate(() => {
-        refreshNationwideBusSnapshot().catch((error) => {
-          console.error('Initial nationwide bus refresh failed:', error.message);
-        });
-      });
-    }
-  }
-  if (request.method === 'POST' && requestUrl.pathname === '/api/presence') {
-    await handleActiveVisitorHeartbeat(request, response);
-    return;
-  }
   if (request.method === 'GET' && requestUrl.pathname === '/api/status') {
     sendJson(response, 200, {
       success: true,
@@ -7060,9 +6553,8 @@ const server = http.createServer(async (request, response) => {
       tdxRefreshIntervalSeconds: TDX_REFRESH_INTERVAL_MS / 1000,
       tdxStaticRefreshIntervalSeconds: TDX_STATIC_REFRESH_INTERVAL_MS / 1000,
       tdxDynamicRefreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
-      tdxTrafficBikeRefreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
-      tdxParkingRefreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
-      tdxIdleTimeoutSeconds: TDX_IDLE_TIMEOUT_MS / 1000,
+      tdxTrafficBikeRefreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
+      tdxParkingRefreshIntervalSeconds: TDX_DYNAMIC_REFRESH_INTERVAL_MS / 1000,
       journeyStaticRefreshIntervalSeconds: JOURNEY_STATIC_REFRESH_INTERVAL_MS / 1000,
       journeyLiveRefreshIntervalSeconds: JOURNEY_LIVE_REFRESH_INTERVAL_MS / 1000,
       journeyGraphActiveWindowSeconds: JOURNEY_GRAPH_ACTIVE_WINDOW_MS / 1000,
@@ -7232,7 +6724,6 @@ server.on('error', (error) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Taiwan Smart Life portal: ${LOCAL_ORIGIN}`);
-  startActiveVisitorLogging();
   console.log(`Environment file: ${environmentFileLoaded ? 'loaded .env' : 'no .env file'}`);
   console.log(`CWA datasets: ${CWA_DATASET_IDS.join(', ')}`);
   console.log(`CWA emergency datasets: ${CWA_EMERGENCY_DATASET_IDS.join(', ')}`);
@@ -7242,5 +6733,7 @@ server.listen(PORT, HOST, () => {
   console.log(`TDX transport: ${tdxCredentials.length ? `${tdxCredentials.length} credential pair(s); single-credential FIFO queue` : 'missing TDX credentials'}`);
   console.log(`GraphHopper routing: ${graphHopperApiKeys.length ? `${graphHopperApiKeys.length} API key(s)` : 'missing GRAPHHOPPER_API_KEY_1/2'}`);
   startTdxCacheRefresh();
+  startNationwideBusRefresh();
+  startJourneyGraphRefresh();
   startCwaEmergencyRefresh();
 });

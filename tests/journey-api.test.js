@@ -829,8 +829,6 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     .filter(([name]) => !/^TDX_CLIENT_(?:ID|SECRET)(?:_\d+)?$/.test(name)
       && !/^TDX_SHARED_CLIENT_(?:ID|SECRET)$/.test(name)
       && name !== 'TDX_CREDENTIALS_JSON'
-      && !['TDX_REFRESH_INTERVAL_MS', 'TDX_DYNAMIC_REFRESH_INTERVAL_MS',
-        'TDX_MOBILITY_REFRESH_INTERVAL_MS', 'TDX_STATIC_REFRESH_INTERVAL_MS'].includes(name)
       && !/^GRAPHHOPPER_API_KEY(?:_\d+)?$/.test(name)));
   const env = {
     ...cleanEnvironment,
@@ -856,10 +854,8 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     TDX_CLIENT_ID_5: 'detail-second',
     TDX_CLIENT_SECRET_5: 'detail-second-secret',
     TDX_REQUEST_SPACING_MS: '1',
-    TDX_REFRESH_INTERVAL_MS: '86400000',
-    TDX_DYNAMIC_REFRESH_INTERVAL_MS: '12000',
-    TDX_MOBILITY_REFRESH_INTERVAL_MS: '1800000',
-    TDX_STATIC_REFRESH_INTERVAL_MS: '86400000',
+    TDX_DYNAMIC_REFRESH_INTERVAL_MS: '1000',
+    TDX_STATIC_REFRESH_INTERVAL_MS: '3000',
     ROUTE_PLANNER_TIMEOUT_MS: '5000',
     JOURNEY_BOOKING_WINDOW_DAYS: '28'
   };
@@ -879,13 +875,13 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     assert.equal(status.credentials.tdxPrimaryCredentialCount, 1);
     assert.equal(status.credentials.tdxReserveCredentialCount, 0);
     assert.equal(status.credentials.graphHopperApiKeyCount, 2);
-    assert.equal(status.tdxStaticRefreshIntervalSeconds, 86_400);
-    assert.equal(status.tdxDynamicRefreshIntervalSeconds, 12);
-    assert.equal(status.journeyStaticRefreshIntervalSeconds, 86_400);
-    assert.equal(status.journeyLiveRefreshIntervalSeconds, 12);
-    assert.equal(status.journeyGraphActiveWindowSeconds, 300);
+    assert.equal(status.tdxStaticRefreshIntervalSeconds, 3);
+    assert.equal(status.tdxDynamicRefreshIntervalSeconds, 1);
+    assert.equal(status.journeyStaticRefreshIntervalSeconds, 3);
+    assert.equal(status.journeyLiveRefreshIntervalSeconds, 1);
+    assert.equal(status.journeyGraphActiveWindowSeconds, 1800);
     assert.deepEqual(status.journeyGraphCache.memory, { bus: 0, rail: 0, metro: 0 });
-    assert.equal(status.routePlannerResultCacheSeconds, 12);
+    assert.equal(status.routePlannerResultCacheSeconds, 5);
     assert.equal(status.routePlannerTimeoutSeconds, 5);
     assert.equal(status.journeyBookingWindowDays, 28);
 
@@ -946,7 +942,7 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     const optionsResponse = await fetch(optionsUrl);
     const options = await optionsResponse.json();
     assert.equal(optionsResponse.status, 200);
-    assert.equal(options.refreshIntervalSeconds, 86_400);
+    assert.equal(options.refreshIntervalSeconds, 3);
     assert.deepEqual(
       options.data.stations.map((station) => station.name),
       ['臺北', '萬華', '板橋', '新竹', '苗栗', '南科', '新市', '三塊厝', '高雄']
@@ -990,7 +986,7 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     const searchResponse = await fetch(searchUrl);
     const search = await searchResponse.json();
     assert.equal(searchResponse.status, 200);
-    assert.equal(search.refreshIntervalSeconds, 12);
+    assert.equal(search.refreshIntervalSeconds, 1);
     assert.equal(search.data.results.length, 1);
     assert.ok(search.data.results.every((result) => !result.title.includes('099')));
     assert.equal(search.data.results[0].title, '自強號 101 次');
@@ -1036,7 +1032,7 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     const liveResponse = await fetch(liveUrl);
     const live = await liveResponse.json();
     assert.equal(liveResponse.status, 200);
-    assert.equal(live.refreshIntervalSeconds, 12);
+    assert.equal(live.refreshIntervalSeconds, 1);
     assert.equal(live.data.title, '臺鐵 101 次');
     assert.equal(live.data.position.lat, 25.0143);
     assert.match(live.data.accuracy, /非連續 GPS/);
@@ -1044,13 +1040,13 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     assert.equal(calls.realtimeTrain, 1);
     assert.equal(calls.fixedStations, 1);
     assert.ok(calls.fixedTimetables >= 2);
+    assert.ok(calls.realtimeBus >= 1);
 
     await waitFor(async () => {
       const response = await fetch(`${baseUrl}/api/tdx/bus?scope=all`);
       const payload = await response.json();
       return payload.totalBuses > 0 ? payload : null;
-    }, 30_000);
-    assert.ok(calls.realtimeBus >= 1);
+    });
     const busOptionsResponse = await fetch(
       `${baseUrl}/api/tdx/journey/options?mode=bus&city=Taipei`
     );
@@ -1067,7 +1063,7 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     const busSearchResponse = await fetch(busSearchUrl);
     const busSearch = await busSearchResponse.json();
     assert.equal(busSearchResponse.status, 200);
-    assert.equal(busSearch.refreshIntervalSeconds, 12);
+    assert.equal(busSearch.refreshIntervalSeconds, 1);
     assert.equal(busSearch.data.results.length, 2);
     assert.equal(busSearch.data.results[0].title, '測試公車・BUS-001');
     assert.equal(busSearch.data.results[1].title, '測試公車・BUS-LATE');
@@ -1140,7 +1136,7 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     const thsrLive = await thsrLiveResponse.json();
     assert.equal(thsrLiveResponse.status, 200);
     assert.match(thsrLive.data.accuracy, /時刻表推估/);
-    assert.equal(thsrLive.refreshIntervalSeconds, 12);
+    assert.equal(thsrLive.refreshIntervalSeconds, 1);
 
     const metroOptionsResponse = await fetch(
       `${baseUrl}/api/tdx/journey/options?mode=metro&city=Taipei&system=TRTC`
@@ -1542,12 +1538,12 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     const parkingUrl = `${baseUrl}/api/tdx/parking?lat=25.033&lng=121.5654&city=Taipei&radius=5000`;
     const firstParkingResponse = await fetch(parkingUrl);
     assert.equal(firstParkingResponse.status, 200);
-    assert.equal((await firstParkingResponse.json()).refreshIntervalSeconds, 1_800);
+    assert.equal((await firstParkingResponse.json()).refreshIntervalSeconds, 1);
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const secondParkingResponse = await fetch(parkingUrl);
     assert.equal(secondParkingResponse.status, 200);
     assert.equal(calls.parkingLots, 1);
-    assert.equal(calls.parkingAvailability, 1);
+    assert.equal(calls.parkingAvailability, 2);
   } catch (error) {
     error.message += `\nServer output:\n${output}`;
     throw error;
