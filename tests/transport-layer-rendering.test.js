@@ -61,7 +61,7 @@ function createRendererContext() {
 test('YouBike and parking renderers add markers when station alerts are present', () => {
   const { context, bikeLayer, parkingLayer } = createRendererContext();
   const helper = readFunction(
-    '    function stationDisasterWarning(',
+    '    function disasterAlertHighlights(',
     '    function renderBikeLayer('
   );
   const bikeRendererSource = readFunction(
@@ -88,4 +88,36 @@ test('YouBike and parking renderers add markers when station alerts are present'
   assert.match(bikeLayer.markers[0].popup, /豪雨特報/);
   assert.equal(parkingLayer.markers.length, 1);
   assert.match(parkingLayer.markers[0].popup, /豪雨特報/);
+});
+
+test('station disaster warnings match raw CWA area strings and show concise highlights', () => {
+  const { context } = createRendererContext();
+  context.state.config.cities = { Tainan: { cityName: '臺南市' } };
+  context.state.hazards = [{
+    category: '颱風警報',
+    title: '海上陸上颱風警報',
+    summary: '臺南市；67；zh-TW；海上陸上颱風；警報；2026-10-23 22:15:00；2026-10-24 02:15:00；陸上強風；特報；2026-10-23 16:47:00；2026-10-24 22:00:00',
+    details: '臺南市；67；zh-TW；海上陸上颱風；警報；2026-10-23 22:15:00；2026-10-24 02:15:00；陸上強風；特報；2026-10-23 16:47:00；2026-10-24 22:00:00',
+    affectedCities: [],
+    affectedAreas: ['臺南市；67；zh-TW'],
+    issuedAt: '2026-10-23T22:15:00+08:00',
+    receivedAt: '2026-10-23T22:16:00+08:00'
+  }];
+  context.emergencyReceivedTimestamp = (alert) => Date.parse(alert.receivedAt || 0);
+  const helper = readFunction(
+    '    function disasterAlertHighlights(',
+    '    function renderBikeLayer('
+  );
+  vm.runInNewContext(helper, context);
+
+  const warning = context.stationDisasterWarning(
+    'U-Bike站',
+    { lat: 22.999, lng: 120.227 },
+    'Tainan'
+  );
+
+  assert.match(warning, /可能災情資訊・臺南市U-Bike站/);
+  assert.match(warning, /海上陸上颱風、陸上強風/);
+  assert.match(warning, /發布時間/);
+  assert.doesNotMatch(warning, /zh-TW|2026-10-23 22:15:00|臺南市；67/);
 });
