@@ -46,22 +46,37 @@ async function stopChild(child) {
 
 test('TDX live traffic is merged, proximity-filtered, and available to active sessions', async () => {
   const tdxPaths = [];
+  const tdxPageOffsets = [];
+  const tdxPageSizes = [];
   const tdxAuthorizationHeaders = [];
+  const additionalFarRoads = Array.from({ length: 999 }, (_, index) => ({
+    SectionID: `far-section-${index}`,
+    RoadName: '測試遠方道路',
+    SectionName: `測試遠方路段 ${index}`
+  }));
   const trafficPayloads = {
     sections: [
       { SectionID: 'near-section', RoadName: '測試道路', SectionName: '測試路段' },
-      { SectionID: 'far-section', RoadName: '遠方道路', SectionName: '遠方路段' }
+      { SectionID: 'far-section', RoadName: '遠方道路', SectionName: '遠方路段' },
+      ...additionalFarRoads
     ],
     shapes: [
       { SectionID: 'near-section', Geometry: 'LINESTRING (121.54 25.0336, 121.58 25.0336)' },
-      { SectionID: 'far-section', Geometry: 'LINESTRING (121.60 25.0336, 121.61 25.0336)' }
+      { SectionID: 'far-section', Geometry: 'LINESTRING (121.60 25.0336, 121.61 25.0336)' },
+      ...additionalFarRoads.map((road) => ({
+        SectionID: road.SectionID,
+        Geometry: 'LINESTRING (121.60 25.0336, 121.61 25.0336)'
+      }))
     ],
     live: [
       {
         SectionID: 'near-section', CongestionLevel: 3, TravelSpeed: 18,
         DataCollectTime: '2026-10-23T11:00:00+08:00'
       },
-      { SectionID: 'far-section', CongestionLevel: 1, TravelSpeed: 48 }
+      { SectionID: 'far-section', CongestionLevel: 1, TravelSpeed: 48 },
+      ...additionalFarRoads.map((road) => ({
+        SectionID: road.SectionID, CongestionLevel: 1, TravelSpeed: 48
+      }))
     ]
   };
   const neighboringCityTraffic = {
@@ -77,6 +92,9 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     const city = pathname.split('/').at(-1);
     if (pathname !== '/token') {
       tdxPaths.push(pathname);
+      const query = new URL(request.url, 'http://localhost').searchParams;
+      tdxPageOffsets.push(query.get('$skip'));
+      tdxPageSizes.push(Number(query.get('$top')));
       tdxAuthorizationHeaders.push(request.headers.authorization);
     }
     let payload = [];
@@ -92,7 +110,18 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
       payload = city === 'Taipei' ? trafficPayloads.live
         : city === 'NewTaipei' ? neighboringCityTraffic.live : [];
     }
+    const query = new URL(request.url, 'http://localhost').searchParams;
+    if (Number(query.get('$top')) > 1_000) {
+      response.writeHead(400, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: 'The maximum $top value is 1000.' }));
+      return;
+    }
     response.writeHead(200, { 'Content-Type': 'application/json' });
+    if (Array.isArray(payload)) {
+      const top = Number(query.get('$top')) || payload.length;
+      const skip = Number(query.get('$skip')) || 0;
+      payload = payload.slice(skip, skip + top);
+    }
     response.end(JSON.stringify(payload));
   });
   const mockPort = await listen(tdxMock);
@@ -155,6 +184,17 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     assert.equal(traffic.data.roads[0].speed, 18);
     assert.deepEqual(traffic.data.roads[0].lines, [[[25.0336, 121.54], [25.0336, 121.58]]]);
     assert.ok(traffic.data.cities.includes('NewTaipei'));
+    for (const pathName of [
+      '/api/basic/v2/Road/Traffic/Section/City/Taipei',
+      '/api/basic/v2/Road/Traffic/SectionShape/City/Taipei',
+      '/api/basic/v2/Road/Traffic/Live/City/Taipei'
+    ]) {
+      assert.equal(tdxPaths.filter((entry) => entry === pathName).length, 2,
+        `TDX response should be fetched in pages: ${pathName}`);
+    }
+    assert.ok(tdxPageOffsets.includes('1000'), 'second TDX page should use $skip=1000');
+    assert.ok(tdxPageSizes.length > 0 && tdxPageSizes.every((size) => size <= 1_000),
+      'TDX requests must stay within the 1000-record page limit');
     const expandedTrafficResponse = await fetch(
       `${baseUrl}/api/tdx/traffic?lat=25.0336&lng=121.5648&city=Taipei&radius=100000`
     );

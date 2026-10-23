@@ -114,6 +114,7 @@ const CWA_DISTRICT_ALIASES = {
   臺北市: { 興雅: '信義區', 三張犁: '信義區', 西村里: '信義區' }
 };
 const TDX_API_ROOT = process.env.TDX_API_ROOT || 'https://tdx.transportdata.tw/api/basic';
+const TDX_MAX_PAGE_SIZE = 1_000;
 const TDX_CITY_BY_PORTAL_CODE = {
   Taipei: 'Taipei', NewTaipei: 'NewTaipei', Keelung: 'Keelung', Taoyuan: 'Taoyuan',
   HsinchuCity: 'Hsinchu', HsinchuCounty: 'HsinchuCounty', Miaoli: 'MiaoliCounty', Taichung: 'Taichung',
@@ -545,9 +546,13 @@ function sendJson(response, status, payload, extraHeaders = {}) {
 function sendApiError(response, error) {
   const status = error instanceof UpstreamError ? error.status : 500;
   const message = status === 429 ? '請求過多，請稍後再試' : error.message;
-  console.error('API request failed:', error);
+  const upstreamDetails = error instanceof UpstreamError ? String(error.details || '').slice(0, 500) : '';
+  console.error('API request failed:', error, upstreamDetails ? `Upstream response: ${upstreamDetails}` : '');
   try {
-    fs.appendFileSync(path.join(ROOT, 'server-error.log'), `${new Date().toISOString()} API request failed: ${error.stack || error.message}\n`);
+    fs.appendFileSync(
+      path.join(ROOT, 'server-error.log'),
+      `${new Date().toISOString()} API request failed: ${error.stack || error.message}${upstreamDetails ? `\nUpstream response: ${upstreamDetails}` : ''}\n`
+    );
   } catch (e) {
     // ignore
   }
@@ -1465,11 +1470,52 @@ async function requestTdxUrl(url, options = {}) {
   }
 }
 
+function tdxFailureDescription(error) {
+  const details = String(error?.details || '').trim();
+  return details ? `${error.message}; upstream: ${details.slice(0, 500)}` : error.message;
+}
+
+async function requestTdxUrlPaginated(url, options = {}) {
+  const requestedTop = Number(url.searchParams.get('$top'));
+  if (!Number.isFinite(requestedTop) || requestedTop <= TDX_MAX_PAGE_SIZE) {
+    return requestTdxUrl(url, options);
+  }
+
+  const initialSkip = Math.max(0, Number(url.searchParams.get('$skip')) || 0);
+  let arrayKey = null;
+  let firstPayload = null;
+  const items = [];
+  for (let offset = 0; offset < requestedTop; offset += TDX_MAX_PAGE_SIZE) {
+    const pageSize = Math.min(TDX_MAX_PAGE_SIZE, requestedTop - offset);
+    const pageUrl = new URL(url);
+    pageUrl.searchParams.set('$top', String(pageSize));
+    pageUrl.searchParams.set('$skip', String(initialSkip + offset));
+    const page = await requestTdxUrl(pageUrl, options);
+    if (!Array.isArray(page) && (!page || typeof page !== 'object')) {
+      throw new UpstreamError('TDX paginated response was not an array', 502);
+    }
+    if (firstPayload === null) {
+      firstPayload = page;
+      if (!Array.isArray(page)) {
+        arrayKey = Object.keys(page).find((key) => Array.isArray(page[key]));
+        if (!arrayKey) return page;
+      }
+    }
+    const pageItems = Array.isArray(page) ? page : page[arrayKey];
+    if (!Array.isArray(pageItems)) {
+      throw new UpstreamError('TDX paginated response shape changed between pages', 502);
+    }
+    items.push(...pageItems);
+    if (pageItems.length < pageSize) break;
+  }
+  return Array.isArray(firstPayload) ? items : { ...firstPayload, [arrayKey]: items };
+}
+
 async function refreshTdxCacheEntry(entry, options = {}) {
   if (entry.pending) return entry.pending;
   entry.pending = (async () => {
     const priority = resolveTdxPriority({ ...options, backgroundRefresh: entry.backgroundRefresh });
-    const data = await requestTdxUrl(entry.url, { priority, backgroundRefresh: true });
+    const data = await requestTdxUrlPaginated(entry.url, { priority, backgroundRefresh: true });
     entry.data = data;
     entry.updatedAt = Date.now();
     entry.expiresAt = entry.updatedAt + entry.refreshIntervalMs;
@@ -1583,22 +1629,45 @@ async function refreshNationwideMobilityCaches() {
     while (nationwideMobilityCityCursor < cities.length && hasRecentTdxDemand() && !isTdxPaused()) {
       const { portalCityCode, tdxCity } = cities[nationwideMobilityCityCursor];
       const parameters = { '$top': 10_000 };
-      const center = PORTAL_CONFIG.cities[portalCityCode]?.mapCenter;
       const requests = [
-        fetchTdxCity('v2/Road/Traffic/Section/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' }),
-        fetchTdxCity('v2/Road/Traffic/SectionShape/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' }),
-        fetchTdxCity('v2/Road/Traffic/Live/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' }),
-        fetchTdxCity('v2/Bike/Station/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' }),
-        fetchTdxCity('v2/Bike/Availability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' }),
-        fetchTdxCity('v1/Parking/OffStreet/CarPark/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' }),
-        fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
+        {
+          label: 'road-sections',
+          promise: fetchTdxCity('v2/Road/Traffic/Section/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
+        },
+        {
+          label: 'road-section-shapes',
+          promise: fetchTdxCity('v2/Road/Traffic/SectionShape/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
+        },
+        {
+          label: 'road-live-traffic',
+          promise: fetchTdxCity('v2/Road/Traffic/Live/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
+        },
+        {
+          label: 'bike-stations',
+          promise: fetchTdxCity('v2/Bike/Station/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
+        },
+        {
+          label: 'bike-availability',
+          promise: fetchTdxCity('v2/Bike/Availability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
+        },
+        {
+          label: 'parking-lots',
+          promise: fetchTdxCity('v1/Parking/OffStreet/CarPark/City', tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS, { priority: 'low' })
+        },
+        {
+          label: 'parking-availability',
+          promise: fetchTdxCity('v1/Parking/OffStreet/ParkingAvailability/City', tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS, { priority: 'low' })
+        }
       ];
-      const results = await Promise.allSettled(requests);
-      const failed = results.filter((result) => result.status === 'rejected');
-      failed.forEach((result) => console.error(
-        `Nationwide TDX mobility refresh failed for ${tdxCity}:`, result.reason.message
+      const results = await Promise.allSettled(requests.map((request) => request.promise));
+      const failed = results.flatMap((result, index) => result.status === 'rejected'
+        ? [{ result, request: requests[index] }]
+        : []);
+      failed.forEach(({ result, request }) => console.error(
+        `Nationwide TDX mobility refresh failed for ${tdxCity} (${request.label}):`,
+        tdxFailureDescription(result.reason)
       ));
-      if (failed.some((result) => result.reason.status === 429)) break;
+      if (failed.some(({ result }) => result.reason.status === 429)) break;
       nationwideMobilityCityCursor += 1;
     }
     if (nationwideMobilityCityCursor >= cities.length) {
@@ -3066,12 +3135,16 @@ async function proxyTraffic(requestUrl, response) {
         livePayload: liveResult.value
       };
     }));
-    const primaryResult = cityResults.find((result) => result.scope.tdxCity === preferredCity);
-    if (primaryResult?.error) throw primaryResult.error;
+    const availableResults = cityResults.filter((result) => !result.error);
+    if (!availableResults.length) {
+      throw cityResults.find((result) => result.scope.tdxCity === preferredCity)?.error
+        || cityResults[0]?.error
+        || new UpstreamError('TDX traffic data is unavailable for the requested area', 502);
+    }
     const unavailableCities = cityResults.filter((result) => result.error).map((result) => result.scope.tdxCity);
     unavailableCities.forEach((city) => {
       const result = cityResults.find((item) => item.scope.tdxCity === city);
-      console.error(`TDX traffic coverage unavailable for ${city}:`, result.error.message);
+      console.error(`TDX traffic coverage unavailable for ${city}:`, tdxFailureDescription(result.error));
     });
     const roads = cityResults.flatMap((result) => {
       if (result.error) return [];
