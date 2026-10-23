@@ -2567,6 +2567,30 @@
       layer.eachLayer((marker) => marker.bringToFront());
     }
 
+    function stationDisasterWarning(type, item, datasetKey) {
+      const cityCode = String(datasetKey || '').replace(/^CITY:/, '');
+      const city = state.config?.cities?.[cityCode]
+        || state.config?.cities?.[findNearestCityCode(Number(item?.lat), Number(item?.lng))];
+      if (!city || !Array.isArray(state.hazards)) return '';
+
+      const cityName = normalizePlaceName(city.cityName);
+      const affectedAlerts = state.hazards.filter((alert) => (
+        Array.isArray(alert.affectedCities)
+        && alert.affectedCities.some((name) => normalizePlaceName(String(name || '')) === cityName)
+      ));
+      if (!affectedAlerts.length) return '';
+
+      const alertDetails = affectedAlerts.map((alert) => {
+        const title = alert.title || alert.category || '災害警報';
+        const details = alert.details || alert.summary || '請留意最新公告。';
+        return `<p><strong>${escapeHtml(title)}</strong>：${escapeHtml(details).replace(/\n/g, '<br>')}</p>`;
+      }).join('');
+
+      return `<div class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-800">
+        <strong>${escapeHtml(city.cityName)}${escapeHtml(type)}位於警報影響區域</strong>${alertDetails}
+      </div>`;
+    }
+
     function renderBikeLayer(payload, cityCode) {
       const layer = state.transportLayers?.bike;
       if (!layer) return;
