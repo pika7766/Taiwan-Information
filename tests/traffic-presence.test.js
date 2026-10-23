@@ -64,8 +64,17 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
       { SectionID: 'far-section', CongestionLevel: 1, TravelSpeed: 48 }
     ]
   };
+  const neighboringCityTraffic = {
+    sections: [{ SectionID: 'neighbor-section', RoadName: '跨縣市測試道路', SectionName: '鄰近縣市路段' }],
+    shapes: [{
+      SectionID: 'neighbor-section',
+      Geometry: 'LINESTRING (121.90 25.0336, 121.91 25.0336)'
+    }],
+    live: [{ SectionID: 'neighbor-section', CongestionLevel: 2, TravelSpeed: 32 }]
+  };
   const tdxMock = http.createServer((request, response) => {
     const pathname = new URL(request.url, 'http://localhost').pathname;
+    const city = pathname.split('/').at(-1);
     if (pathname !== '/token') {
       tdxPaths.push(pathname);
       tdxAuthorizationHeaders.push(request.headers.authorization);
@@ -73,12 +82,15 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     let payload = [];
     if (pathname === '/token') {
       payload = { access_token: 'test-tdx-token', expires_in: 3600 };
-    } else if (pathname.endsWith('/v2/Road/Traffic/Section/City/Taipei')) {
-      payload = trafficPayloads.sections;
-    } else if (pathname.endsWith('/v2/Road/Traffic/SectionShape/City/Taipei')) {
-      payload = trafficPayloads.shapes;
-    } else if (pathname.endsWith('/v2/Road/Traffic/Live/City/Taipei')) {
-      payload = trafficPayloads.live;
+    } else if (pathname.includes('/v2/Road/Traffic/Section/City/')) {
+      payload = city === 'Taipei' ? trafficPayloads.sections
+        : city === 'NewTaipei' ? neighboringCityTraffic.sections : [];
+    } else if (pathname.includes('/v2/Road/Traffic/SectionShape/City/')) {
+      payload = city === 'Taipei' ? trafficPayloads.shapes
+        : city === 'NewTaipei' ? neighboringCityTraffic.shapes : [];
+    } else if (pathname.includes('/v2/Road/Traffic/Live/City/')) {
+      payload = city === 'Taipei' ? trafficPayloads.live
+        : city === 'NewTaipei' ? neighboringCityTraffic.live : [];
     }
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify(payload));
@@ -142,6 +154,15 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     assert.equal(traffic.data.roads[0].status, 'congested');
     assert.equal(traffic.data.roads[0].speed, 18);
     assert.deepEqual(traffic.data.roads[0].lines, [[[25.0336, 121.54], [25.0336, 121.58]]]);
+    assert.ok(traffic.data.cities.includes('NewTaipei'));
+    const expandedTrafficResponse = await fetch(
+      `${baseUrl}/api/tdx/traffic?lat=25.0336&lng=121.5648&city=Taipei&radius=100000`
+    );
+    const expandedTraffic = await expandedTrafficResponse.json();
+    assert.equal(expandedTrafficResponse.status, 200, output);
+    assert.ok(expandedTraffic.data.roads.some((road) => road.sectionId === 'neighbor-section'),
+      'traffic coverage should include adjacent-city roads beyond the old 30 km cap');
+    assert.ok(tdxPaths.includes('/api/basic/v2/Road/Traffic/SectionShape/City/NewTaipei'));
     assert.ok(tdxAuthorizationHeaders.includes('Bearer test-tdx-token'));
     for (const pathName of [
       '/api/basic/v2/Road/Traffic/Section/City/Taipei',

@@ -2638,6 +2638,10 @@
       const isActive = (layerKey) => requestedLayers.has(layerKey)
         && (force || state.map.hasLayer(state.transportLayers[layerKey]));
       const now = Date.now();
+      const viewportRadius = Math.ceil(state.map.distance(
+        state.map.getCenter(), state.map.getBounds().getNorthEast()
+      ));
+      const trafficRadius = Math.min(500_000, Math.max(1_000, viewportRadius));
       const distanceFrom = (record) => record
         ? state.map.distance([lat, lng], [record.lat, record.lng])
         : Infinity;
@@ -2648,7 +2652,9 @@
       const shouldLoadBus = isActive('bus');
       const shouldLoadBusStops = shouldLoadBus && state.loadedBusStopCityCode !== cityCode;
       const shouldLoadTraffic = isActive('traffic') && (force || forceTdx || cityChanged
-        || !state.lastTrafficPayload || distanceFrom(trafficRecord) >= 3000
+        || !state.lastTrafficPayload
+        || distanceFrom(trafficRecord) + trafficRadius > (trafficRecord?.radius || 0)
+        || Math.abs(trafficRadius - (trafficRecord?.radius || 0)) >= Math.max(500, trafficRadius * 0.2)
         || now - (trafficRecord?.at || 0) >= TDX_MOBILITY_REFRESH_INTERVAL_MS);
       const bikeDatasetKey = `CITY:${cityCode}`;
       const shouldLoadBike = isActive('bike') && (force || forceTdx || cityChanged || state.loadedBikeCityCode !== bikeDatasetKey
@@ -2691,7 +2697,6 @@
       }
       state.transportAbortController = new AbortController();
       const signal = state.transportAbortController.signal;
-      const viewportRadius = Math.ceil(state.map.distance(state.map.getCenter(), state.map.getBounds().getNorthEast()));
       const busParameters = { lat, lng, city: cityCode, radius: Math.min(50000, Math.max(1000, viewportRadius)) };
       const tasks = [];
       let busRequest = null;
@@ -2724,13 +2729,13 @@
 
       if (shouldLoadTraffic) {
         trafficRequest = fetchOfficialData('/api/tdx/traffic', {
-          lat, lng, city: cityCode, radius: Math.min(30000, Math.max(1000, viewportRadius))
+          lat, lng, city: cityCode, radius: trafficRadius
         }, signal);
         tasks.push({ key: 'traffic', promise: trafficRequest });
         trafficRequest.then((payload) => {
           if (signal.aborted) return;
           state.lastTrafficPayload = payload;
-          state.lastTransportFetch.traffic = { lat, lng, at: Date.now() };
+          state.lastTransportFetch.traffic = { lat, lng, radius: trafficRadius, at: Date.now() };
           renderTrafficLayer(payload);
         }).catch((error) => {
           if (error.name !== 'AbortError') console.error('TDX 即時路況讀取失敗：', error);

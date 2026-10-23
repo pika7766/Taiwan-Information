@@ -2399,6 +2399,25 @@ function trafficStatus(congestionLevel) {
   return { key: 'smooth', label: '順暢行駛' };
 }
 
+function trafficCityScopes(lat, lng, radiusMeters, preferredCity) {
+  const cityBufferMeters = 75_000;
+  const scopes = Object.entries(TDX_CITY_BY_PORTAL_CODE)
+    .map(([portalCityCode, tdxCity]) => ({
+      portalCityCode,
+      tdxCity,
+      center: PORTAL_CONFIG.cities[portalCityCode]?.mapCenter
+    }))
+    .filter((scope) => (
+      scope.center
+      && haversineMeters(lat, lng, scope.center[0], scope.center[1]) <= radiusMeters + cityBufferMeters
+    ));
+  const uniqueScopes = [...new Map(scopes.map((scope) => [scope.tdxCity, scope])).values()];
+  if (!uniqueScopes.some((scope) => scope.tdxCity === preferredCity)) {
+    uniqueScopes.push({ portalCityCode: null, tdxCity: preferredCity });
+  }
+  return uniqueScopes;
+}
+
 function mapBusStop(stop, origin = null) {
   const position = positionOf(stop);
   const stopUid = stop.StopUID || stop.StopID || '';
@@ -3025,47 +3044,73 @@ async function proxyRoadNetwork(requestUrl, response) {
 async function proxyTraffic(requestUrl, response) {
   try {
     const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
+    const preferredCity = requireTdxCity(requestUrl.searchParams, lat, lng);
     const requestedRadius = Number(requestUrl.searchParams.get('radius'));
     const radiusMeters = Number.isFinite(requestedRadius)
-      ? Math.min(30_000, Math.max(1_000, requestedRadius))
+      ? Math.min(500_000, Math.max(1_000, requestedRadius))
       : 5_000;
     const parameters = { '$top': 10_000 };
-    const [sectionsPayload, shapesPayload, livePayload] = await Promise.all([
-      fetchTdxCity('v2/Road/Traffic/Section/City', city, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
-      fetchTdxCity('v2/Road/Traffic/SectionShape/City', city, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
-      fetchTdxCity('v2/Road/Traffic/Live/City', city, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS)
-    ]);
-    const sections = asArray(sectionsPayload, ['Sections']);
-    const shapes = asArray(shapesPayload, ['SectionShapes']);
-    const liveItems = asArray(livePayload, ['LiveTraffics']);
-    const sectionById = new Map(sections.map((section) => [String(section.SectionID), section]));
-    const liveById = new Map(liveItems.map((item) => [String(item.SectionID), item]));
-    const roads = shapes.map((shape) => {
-      const lines = parseWktLines(shape.Geometry);
-      if (!lines.length || !isPolylineWithinRadius(lines, lat, lng, radiusMeters)) return null;
-      const section = sectionById.get(String(shape.SectionID)) || {};
-      const live = liveById.get(String(shape.SectionID)) || {};
-      const speed = Number(live.TravelSpeed);
-      const status = trafficStatus(live.CongestionLevel);
+    const cityScopes = trafficCityScopes(lat, lng, radiusMeters, preferredCity);
+    const cityResults = await Promise.all(cityScopes.map(async (scope) => {
+      const [sectionsResult, shapesResult, liveResult] = await Promise.allSettled([
+        fetchTdxCity('v2/Road/Traffic/Section/City', scope.tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
+        fetchTdxCity('v2/Road/Traffic/SectionShape/City', scope.tdxCity, parameters, TDX_STATIC_REFRESH_INTERVAL_MS),
+        fetchTdxCity('v2/Road/Traffic/Live/City', scope.tdxCity, parameters, TDX_MOBILITY_REFRESH_INTERVAL_MS)
+      ]);
+      const failed = [sectionsResult, shapesResult, liveResult].find((result) => result.status === 'rejected');
+      if (failed) return { scope, error: failed.reason };
       return {
-        sectionId: shape.SectionID,
-        roadName: section.RoadName || section.SectionName || String(shape.SectionID || '未命名路段'),
-        sectionName: section.SectionName || '',
-        lines,
-        speed: Number.isFinite(speed) && speed >= 0 ? speed : null,
-        congestionLevel: live.CongestionLevel ?? null,
-        status: status.key,
-        statusLabel: status.label,
-        updateTime: live.DataCollectTime || livePayload.UpdateTime || null
+        scope,
+        sectionsPayload: sectionsResult.value,
+        shapesPayload: shapesResult.value,
+        livePayload: liveResult.value
       };
-    }).filter(Boolean);
+    }));
+    const primaryResult = cityResults.find((result) => result.scope.tdxCity === preferredCity);
+    if (primaryResult?.error) throw primaryResult.error;
+    const unavailableCities = cityResults.filter((result) => result.error).map((result) => result.scope.tdxCity);
+    unavailableCities.forEach((city) => {
+      const result = cityResults.find((item) => item.scope.tdxCity === city);
+      console.error(`TDX traffic coverage unavailable for ${city}:`, result.error.message);
+    });
+    const roads = cityResults.flatMap((result) => {
+      if (result.error) return [];
+      const sections = asArray(result.sectionsPayload, ['Sections']);
+      const shapes = asArray(result.shapesPayload, ['SectionShapes']);
+      const liveItems = asArray(result.livePayload, ['LiveTraffics']);
+      const sectionById = new Map(sections.map((section) => [String(section.SectionID), section]));
+      const liveById = new Map(liveItems.map((item) => [String(item.SectionID), item]));
+      return shapes.map((shape) => {
+        const lines = parseWktLines(shape.Geometry);
+        if (!lines.length || !isPolylineWithinRadius(lines, lat, lng, radiusMeters)) return null;
+        const section = sectionById.get(String(shape.SectionID)) || {};
+        const live = liveById.get(String(shape.SectionID)) || {};
+        const speed = Number(live.TravelSpeed);
+        const status = trafficStatus(live.CongestionLevel);
+        return {
+          sectionId: shape.SectionID,
+          roadName: section.RoadName || section.SectionName || String(shape.SectionID || '未命名路段'),
+          sectionName: section.SectionName || '',
+          lines,
+          speed: Number.isFinite(speed) && speed >= 0 ? speed : null,
+          congestionLevel: live.CongestionLevel ?? null,
+          status: status.key,
+          statusLabel: status.label,
+          updateTime: live.DataCollectTime || result.livePayload.UpdateTime || null
+        };
+      }).filter(Boolean);
+    });
     sendJson(response, 200, {
       success: true,
+      degraded: unavailableCities.length > 0,
+      unavailableCities,
+      message: unavailableCities.length
+        ? `部分縣市即時路況暫時無法取得：${unavailableCities.join('、')}`
+        : null,
       source: '交通部 TDX 道路路段、路段線形與即時路況',
       observedAt: new Date().toISOString(),
       refreshIntervalSeconds: TDX_MOBILITY_REFRESH_INTERVAL_MS / 1000,
-      data: { roads }
+      data: { roads, cities: cityScopes.map((scope) => scope.tdxCity) }
     });
   } catch (error) {
     sendApiError(response, error);
