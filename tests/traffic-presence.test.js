@@ -49,6 +49,7 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
   const tdxPageOffsets = [];
   const tdxPageSizes = [];
   const tdxAuthorizationHeaders = [];
+  const tdxEndpointAttempts = new Map();
   const supportedTrafficCities = new Set([
     'YilanCounty', 'HsinchuCounty', 'ChanghuaCounty', 'YunlinCounty', 'PingtungCounty',
     'Keelung', 'Taipei', 'Kaohsiung', 'NewTaipei', 'Taichung', 'Tainan', 'Taoyuan'
@@ -100,10 +101,16 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     const city = pathname.split('/').at(-1);
     if (pathname !== '/token') {
       tdxPaths.push(pathname);
+      tdxEndpointAttempts.set(pathname, (tdxEndpointAttempts.get(pathname) || 0) + 1);
       const query = new URL(request.url, 'http://localhost').searchParams;
       tdxPageOffsets.push(query.get('$skip'));
       tdxPageSizes.push(Number(query.get('$top')));
       tdxAuthorizationHeaders.push(request.headers.authorization);
+      if (pathname === '/api/basic/v2/Bike/Availability/City/Tainan'
+        && tdxEndpointAttempts.get(pathname) === 1) {
+        request.socket.destroy();
+        return;
+      }
     }
     let payload = [];
     if (pathname === '/token') {
@@ -243,6 +250,26 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
       assert.ok(tdxPaths.includes(pathName), `TDX endpoint was not requested: ${pathName}`);
     }
 
+    const bikeResponse = await fetch(
+      `${baseUrl}/api/tdx/bike?lat=22.997&lng=120.212&city=Tainan`
+    );
+    assert.equal(bikeResponse.status, 200);
+    assert.equal((await bikeResponse.json()).success, true);
+    assert.equal(
+      tdxEndpointAttempts.get('/api/basic/v2/Bike/Availability/City/Tainan'),
+      2,
+      `transient TDX network errors should be retried once\n${output}`
+    );
+    assert.match(output, /\[tdx-bike\].*"outcome":"success".*"city":"Tainan"/,
+      'bike API requests should report their outcome and returned station count');
+    const parkingResponse = await fetch(
+      `${baseUrl}/api/tdx/parking?lat=22.997&lng=120.212&city=Tainan&radius=5000`
+    );
+    assert.equal(parkingResponse.status, 200);
+    assert.equal((await parkingResponse.json()).success, true);
+    assert.match(output, /\[tdx-parking\].*"outcome":"success".*"city":"Tainan"/,
+      'parking API requests should report their outcome and returned lot count');
+
     const failedTrafficResponse = await fetch(
       `${baseUrl}/api/tdx/traffic?lat=0&lng=0&city=Taipei&radius=1000`
     );
@@ -278,6 +305,8 @@ test('TDX live traffic is merged, proximity-filtered, and available to active se
     const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
     assert.match(indexHtml, /key: 'traffic', label: '即時路況'/);
     assert.match(indexHtml, /L\.polyline\(line/);
+    assert.match(indexHtml, /function abortTransportRequests\(layerKeys = Object\.keys\(state\.transportAbortControllers\)\)/);
+    assert.doesNotMatch(indexHtml, /state\.transportAbortController\?\.abort/);
     assert.doesNotMatch(indexHtml, /handleTrafficLayerDisabled|即時路況功能目前暫不開放/);
   } finally {
     await stopChild(child);

@@ -1006,7 +1006,7 @@
       geocodeAbortController: null,
       mapSearchAbortController: null,
       officialDataAbortController: null,
-      transportAbortController: null,
+      transportAbortControllers: {},
       transportRefreshTimer: null,
       manualMapMovementPending: false,
       manualMapRefreshDueAt: 0,
@@ -1408,12 +1408,19 @@
       window.clearTimeout(state.transportRefreshTimer);
     }
 
+    function abortTransportRequests(layerKeys = Object.keys(state.transportAbortControllers)) {
+      layerKeys.forEach((layerKey) => {
+        state.transportAbortControllers[layerKey]?.abort();
+        delete state.transportAbortControllers[layerKey];
+      });
+    }
+
     function markManualMapMovement(force = false) {
       if (!force && Date.now() < state.programmaticMapMoveUntil) return;
       state.manualMapMovementPending = true;
       state.manualMapRefreshDueAt = Date.now() + MANUAL_MAP_REFRESH_DELAY_MS;
       window.clearTimeout(state.transportRefreshTimer);
-      state.transportAbortController?.abort();
+      abortTransportRequests();
       if (state.transportDataSuspended) return;
       scheduleTransportLayerRefresh(MANUAL_MAP_REFRESH_DELAY_MS);
     }
@@ -2681,7 +2688,14 @@
         return;
       }
 
-      state.transportAbortController?.abort();
+      if (cityChanged) {
+        abortTransportRequests();
+      } else {
+        if (shouldLoadBus) abortTransportRequests(['bus']);
+        if (shouldLoadTraffic) abortTransportRequests(['traffic']);
+        if (shouldLoadBike) abortTransportRequests(['bike']);
+        if (shouldLoadParking) abortTransportRequests(['parking']);
+      }
       if (cityChanged) {
         state.busVehicleLayer?.clearLayers();
         state.busStopLayer?.clearLayers();
@@ -2693,10 +2707,18 @@
         state.loadedBusStopCityCode = null;
         state.lastRoadPayload = null;
         state.lastTrafficPayload = null;
+        state.lastBikePayload = null;
+        state.lastBikeDatasetKey = null;
         state.loadedParkingCityCode = null;
+        state.loadedBikeCityCode = null;
       }
-      state.transportAbortController = new AbortController();
-      const signal = state.transportAbortController.signal;
+      const requestSignals = {};
+      const beginRequest = (layerKey) => {
+        const controller = new AbortController();
+        state.transportAbortControllers[layerKey] = controller;
+        requestSignals[layerKey] = controller.signal;
+        return controller.signal;
+      };
       const busParameters = { lat, lng, city: cityCode, radius: Math.min(50000, Math.max(1000, viewportRadius)) };
       const tasks = [];
       let busRequest = null;
@@ -2705,6 +2727,7 @@
       let parkingRequest = null;
 
       if (shouldLoadBus) {
+        const signal = beginRequest('bus');
         busRequest = fetchOfficialData('/api/tdx/bus', busParameters, signal);
         tasks.push({ key: 'bus', promise: busRequest });
         busRequest.then((payload) => {
@@ -2728,6 +2751,7 @@
       }
 
       if (shouldLoadTraffic) {
+        const signal = beginRequest('traffic');
         trafficRequest = fetchOfficialData('/api/tdx/traffic', {
           lat, lng, city: cityCode, radius: trafficRadius
         }, signal);
@@ -2743,6 +2767,7 @@
       }
 
       if (shouldLoadBike) {
+        const signal = beginRequest('bike');
         bikeRequest = fetchOfficialData('/api/tdx/bike', { lat, lng, city: cityCode }, signal);
         tasks.push({ key: 'bike', promise: bikeRequest });
         bikeRequest.then((payload) => {
@@ -2755,6 +2780,7 @@
       }
 
       if (shouldLoadParking) {
+        const signal = beginRequest('parking');
         parkingRequest = fetchOfficialData('/api/tdx/parking', {
           lat, lng, city: cityCode, radius: Math.min(50000, Math.max(1000, viewportRadius))
         }, signal);
@@ -2769,7 +2795,11 @@
       }
 
       const results = await Promise.allSettled(tasks.map((task) => task.promise));
-      if (signal.aborted) return;
+      Object.entries(requestSignals).forEach(([layerKey, signal]) => {
+        if (state.transportAbortControllers[layerKey]?.signal === signal) {
+          delete state.transportAbortControllers[layerKey];
+        }
+      });
       const bikeIndex = tasks.findIndex((task) => task.key === 'bike');
       const bikeResult = bikeIndex >= 0 ? results[bikeIndex] : null;
       const bikeIncomplete = bikeResult?.status === 'fulfilled'
@@ -5286,7 +5316,7 @@
 
     function isolateMapForJourneyFocus(label) {
       state.transportDataSuspended = true;
-      state.transportAbortController?.abort();
+      abortTransportRequests();
       window.clearTimeout(state.transportRefreshTimer);
       const visibility = { transport: {}, auxiliary: {}, markers: {} };
       Object.entries(state.transportLayers || {}).forEach(([key, layer]) => {

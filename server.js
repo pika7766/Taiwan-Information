@@ -1429,7 +1429,10 @@ function queueTdxRequest(task, options = {}) {
     if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
     lastTdxRequestAt = Date.now();
     return task();
-  }, { maxAttempts: options.maxAttempts });
+  }, {
+    maxAttempts: options.maxAttempts,
+    shouldRetry: options.shouldRetry
+  });
 }
 
 async function requestTdxUrl(url, options = {}) {
@@ -1468,7 +1471,10 @@ async function requestTdxUrl(url, options = {}) {
       return fetchJson(url, {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
       }, 60_000);
-    }, { maxAttempts: 1 });
+    }, {
+      maxAttempts: 2,
+      shouldRetry: (error) => error instanceof TypeError
+    });
     return data;
   } catch (error) {
     if (error.status === 429) {
@@ -2921,13 +2927,39 @@ async function fetchBikeCityData(city, origin = null, includeAvailability = true
   }).filter((item) => item.stationName && Number.isFinite(item.lat) && Number.isFinite(item.lng));
 }
 
+function logMobilityApiResult(layer, outcome, details) {
+  const logger = outcome === 'failure' ? console.error : console.log;
+  logger(`[tdx-${layer}]`, JSON.stringify({ outcome, ...details }));
+}
+
 async function proxyBike(requestUrl, response) {
+  const startedAt = Date.now();
+  let city = requestUrl.searchParams.get('city') || 'unknown';
+  logMobilityApiResult('bike', 'request', { city });
   try {
     await runWithTdxPriority('high', async () => {
       const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-      const city = requireTdxCity(requestUrl.searchParams, lat, lng);
+      city = requireTdxCity(requestUrl.searchParams, lat, lng);
+      if (!TDX_BIKE_CITIES.has(city)) {
+        const payload = {
+          success: true,
+          degraded: true,
+          message: `TDX YouBike 站點資料目前未涵蓋 ${city}`,
+          source: '交通部 TDX 公共自行車即時動態',
+          observedAt: new Date().toISOString(),
+          data: []
+        };
+        logMobilityApiResult('bike', 'degraded', {
+          city, reason: 'no-supported-coverage', stations: 0, elapsedMs: Date.now() - startedAt
+        });
+        sendJson(response, 200, payload);
+        return;
+      }
       const data = (await fetchBikeCityData(city, { lat, lng }))
         .sort((left, right) => left.distanceMeters - right.distanceMeters);
+      logMobilityApiResult('bike', 'success', {
+        city, stations: data.length, elapsedMs: Date.now() - startedAt
+      });
       sendJson(response, 200, {
         success: true,
         source: '交通部 TDX 公共自行車即時動態',
@@ -2950,6 +2982,9 @@ async function proxyBike(requestUrl, response) {
         }))
           .filter((station) => station.distanceMeters <= 30_000)
           .sort((left, right) => left.distanceMeters - right.distanceMeters);
+        logMobilityApiResult('bike', 'degraded', {
+          city, stations: data.length, reason: tdxFailureDescription(error), elapsedMs: Date.now() - startedAt
+        });
         sendJson(response, 200, {
           success: true,
           degraded: true,
@@ -2963,6 +2998,12 @@ async function proxyBike(requestUrl, response) {
         // Fallthrough to sendApiError
       }
     }
+    logMobilityApiResult('bike', 'failure', {
+      city,
+      status: error instanceof UpstreamError ? error.status : 500,
+      error: tdxFailureDescription(error),
+      elapsedMs: Date.now() - startedAt
+    });
     sendApiError(response, error);
   }
 }
@@ -3092,14 +3133,20 @@ async function fetchParkingCityData(city, origin, radiusMeters) {
 }
 
 async function proxyParking(requestUrl, response) {
+  const startedAt = Date.now();
+  let city = requestUrl.searchParams.get('city') || 'unknown';
+  logMobilityApiResult('parking', 'request', { city });
   try {
     const { lat, lng } = requireTaiwanCoordinates(requestUrl.searchParams);
-    const city = requireTdxCity(requestUrl.searchParams, lat, lng);
+    city = requireTdxCity(requestUrl.searchParams, lat, lng);
     const requestedRadius = Number(requestUrl.searchParams.get('radius'));
     const radiusMeters = Number.isFinite(requestedRadius)
       ? Math.min(50_000, Math.max(1_000, requestedRadius))
       : 10_000;
     const data = await fetchParkingCityData(city, { lat, lng }, radiusMeters);
+    logMobilityApiResult('parking', 'success', {
+      city, lots: data.length, radiusMeters, elapsedMs: Date.now() - startedAt
+    });
     sendJson(response, 200, {
       success: true,
       source: '交通部 TDX 路外停車場與剩餘車位',
@@ -3120,6 +3167,12 @@ async function proxyParking(requestUrl, response) {
       });
       return;
     }
+    logMobilityApiResult('parking', 'failure', {
+      city,
+      status: error instanceof UpstreamError ? error.status : 500,
+      error: tdxFailureDescription(error),
+      elapsedMs: Date.now() - startedAt
+    });
     sendApiError(response, error);
   }
 }
