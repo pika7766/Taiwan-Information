@@ -6207,13 +6207,55 @@
       }
     }
 
+    const fetchWithActivityOrdering = window.fetch.bind(window);
+    let tdxUserActivityPromise = Promise.resolve();
+
+    function reportTdxUserActivity(force = false) {
+      if (document.hidden && !force) return tdxUserActivityPromise;
+      tdxUserActivityPromise = fetchWithActivityOrdering(new URL('/api/activity', API_BASE_URL), {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: '',
+        keepalive: true
+      }).then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      }).catch((error) => {
+        console.warn('使用狀態更新失敗：', error);
+      });
+      return tdxUserActivityPromise;
+    }
+    window.__reportTdxUserActivity = reportTdxUserActivity;
+
+    window.fetch = (input, options) => {
+      try {
+        const url = new URL(
+          typeof input === 'string' ? input : input.url || input.href,
+          window.location.href
+        );
+        if (url.pathname.startsWith('/api/tdx/') || url.pathname === '/api/map/roads') {
+          return tdxUserActivityPromise.then(() => fetchWithActivityOrdering(input, options));
+        }
+      } catch (error) {
+        console.warn('TDX 請求網址解析失敗：', error);
+      }
+      return fetchWithActivityOrdering(input, options);
+    };
+
+    document.addEventListener('click', (event) => {
+      if (event.isTrusted) reportTdxUserActivity();
+    }, true);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) reportTdxUserActivity();
+    });
+    window.addEventListener('pageshow', () => reportTdxUserActivity());
     try {
       bindEventListeners();
     } catch (error) {
       console.error('固定事件監聽器初始化失敗：', error);
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
+      await reportTdxUserActivity();
       runInitializationStep('地圖', initializeMap);
       runInitializationStep('個人化設定', loadPersonalSettings);
       if (state.map) state.map.invalidateSize({ pan: false });

@@ -156,6 +156,7 @@ async function runScenario({ credentialId = 'single', limited = [], unavailable 
       const response = await fetch(`${baseUrl}/api/status`);
       return response.ok ? response.json() : null;
     });
+    await fetch(`${baseUrl}/api/activity`, { method: 'POST' });
     const parkingResponse = await fetch(
       `${baseUrl}/api/tdx/parking?lat=25.033&lng=121.5654&city=Taipei&radius=5000`
     );

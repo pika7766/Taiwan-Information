@@ -384,6 +384,7 @@ App.addListener('backButton', ({ canGoBack }) => {
 App.addListener('appStateChange', ({ isActive }) => {
   appIsActive = isActive;
   if (isActive) {
+    window.__reportTdxUserActivity?.(true);
     window.dispatchEvent(new Event('resize'));
     messagingSetupPromise = null;
     initializeFirebaseMessaging();

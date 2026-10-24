@@ -1040,13 +1040,13 @@ test('journey APIs cache fixed/live data separately and use their assigned pools
     assert.equal(calls.realtimeTrain, 1);
     assert.equal(calls.fixedStations, 1);
     assert.ok(calls.fixedTimetables >= 2);
-    assert.ok(calls.realtimeBus >= 1);
 
     await waitFor(async () => {
       const response = await fetch(`${baseUrl}/api/tdx/bus?scope=all`);
       const payload = await response.json();
       return payload.totalBuses > 0 ? payload : null;
     });
+    assert.ok(calls.realtimeBus >= 1);
     const busOptionsResponse = await fetch(
       `${baseUrl}/api/tdx/journey/options?mode=bus&city=Taipei`
     );

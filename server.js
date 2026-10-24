@@ -64,6 +64,11 @@ const TDX_STATIC_REFRESH_INTERVAL_MS = Math.max(
 );
 const JOURNEY_STATIC_REFRESH_INTERVAL_MS = TDX_STATIC_REFRESH_INTERVAL_MS;
 const JOURNEY_LIVE_REFRESH_INTERVAL_MS = TDX_DYNAMIC_REFRESH_INTERVAL_MS;
+const TDX_USER_IDLE_TIMEOUT_MS = Math.max(
+  1_000,
+  Number(process.env.TDX_USER_IDLE_TIMEOUT_MS) || 5 * 60 * 1000
+);
+const TDX_IDLE_PAUSED_MESSAGE = '目前沒有前景使用者活動，TDX 資料更新已暫停';
 const JOURNEY_GRAPH_ACTIVE_WINDOW_MS = Math.max(
   JOURNEY_STATIC_REFRESH_INTERVAL_MS * 3,
   Number(process.env.JOURNEY_GRAPH_ACTIVE_WINDOW_MS) || 30 * 60 * 1000
@@ -229,6 +234,45 @@ const PUBLIC_STATIC_FILES = new Set([
 const tdxCredential = loadTdxCredential();
 const tdxCredentials = tdxCredential ? [tdxCredential] : [];
 let tdxRequestPausedUntil = 0;
+let lastTdxUserActivityAt = 0;
+let tdxUserIdleTimer = null;
+const activeTdxRequests = new Set();
+function stopActiveTdxRequests() {
+  const reason = new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
+  activeTdxRequests.forEach((controller) => controller.abort(reason));
+}
+function scheduleTdxIdleShutdown() {
+  clearTimeout(tdxUserIdleTimer);
+  if (!lastTdxUserActivityAt) return;
+  const remainingMs = Math.max(
+    0,
+    lastTdxUserActivityAt + TDX_USER_IDLE_TIMEOUT_MS - Date.now()
+  );
+  tdxUserIdleTimer = setTimeout(() => {
+    if (isTdxAcquisitionActive()) {
+      scheduleTdxIdleShutdown();
+      return;
+    }
+    if (!tdxFetchingEnabled) return;
+    stopActiveTdxRequests();
+    console.log(`[tdx-activity] no foreground user activity for ${Math.round(TDX_USER_IDLE_TIMEOUT_MS / 60_000)} minutes; TDX acquisition paused`);
+  }, remainingMs);
+  tdxUserIdleTimer.unref?.();
+}
+function recordTdxUserActivity() {
+  const wasActive = isTdxAcquisitionActive();
+  lastTdxUserActivityAt = Date.now();
+  scheduleTdxIdleShutdown();
+  if (!wasActive && isTdxAcquisitionActive()) resumeActiveTdxAcquisition();
+}
+function isTdxAcquisitionActive() {
+  return tdxFetchingEnabled
+    && lastTdxUserActivityAt > 0
+    && Date.now() - lastTdxUserActivityAt < TDX_USER_IDLE_TIMEOUT_MS;
+}
+function resumeActiveTdxAcquisition() {
+  refreshActiveTdxCache().catch((error) => console.error('TDX cache resume failed:', error.message));
+}
 function isTdxPaused() {
   return Date.now() < tdxRequestPausedUntil;
 }
@@ -614,6 +658,9 @@ function adminStatusPayload() {
     graphHopperAvailableApiKeyCount: graphHopperApiKeys
       .filter((apiKey) => Date.now() >= apiKey.rateLimitedUntil).length,
     queueStatus: tdxQueue.status(),
+    tdxAcquisitionActive: isTdxAcquisitionActive(),
+    tdxLastUserActivityAt: lastTdxUserActivityAt ? new Date(lastTdxUserActivityAt).toISOString() : null,
+    tdxUserIdleTimeoutSeconds: TDX_USER_IDLE_TIMEOUT_MS / 1000,
     fcmConfigured: Boolean(fcmProjectId && fcmServiceAccount?.client_email && fcmServiceAccount?.private_key),
     fcmProjectId,
     fcmTopic: FCM_TOPIC,
@@ -694,12 +741,9 @@ async function handleAdminTdxSetting(request, response) {
       syncServiceSettingsToPortalContent();
       throw error;
     }
+    if (!tdxFetchingEnabled) stopActiveTdxRequests();
     sendJson(response, 200, adminStatusPayload());
-    if (tdxFetchingEnabled) {
-      refreshActiveTdxCache().catch((error) => console.error('TDX cache resume failed:', error.message));
-      refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus resume failed:', error.message));
-      refreshActiveJourneyGraphs().catch((error) => console.error('Journey graph resume failed:', error.message));
-    }
+    if (isTdxAcquisitionActive()) resumeActiveTdxAcquisition();
   } catch (error) {
     sendApiError(response, error);
   }
@@ -779,7 +823,11 @@ function handleAdminLogout(request, response) {
 }
 
 async function fetchJson(url, options = {}, timeoutMs = 20_000) {
+  const externalSignal = options.signal;
   const controller = new AbortController();
+  const abortFromExternalSignal = () => controller.abort(externalSignal.reason);
+  if (externalSignal?.aborted) abortFromExternalSignal();
+  else externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true });
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
@@ -799,10 +847,12 @@ async function fetchJson(url, options = {}, timeoutMs = 20_000) {
       throw new UpstreamError(`Official service returned invalid JSON: ${error.message}`, 502, text.slice(0, 1000));
     }
   } catch (error) {
+    if (externalSignal?.aborted && externalSignal.reason) throw externalSignal.reason;
     if (error.name === 'AbortError') throw new UpstreamError('Official service request timed out', 504);
     throw error;
   } finally {
     clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', abortFromExternalSignal);
   }
 }
 
@@ -1247,10 +1297,11 @@ function loadGraphHopperApiKeys() {
     }));
 }
 
-async function getTdxToken(credential) {
+async function getTdxToken(credential, options = {}) {
   // Preserve token if it has more than 5 minutes remaining to avoid unnecessary token churn
   if (credential.token && Date.now() < credential.expiresAt - 300_000) return credential.token;
   if (credential.tokenPromise) return credential.tokenPromise;
+  if (!isTdxAcquisitionActive()) throw new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
   credential.tokenPromise = (async () => {
     const body = new URLSearchParams({
       grant_type: 'client_credentials',
@@ -1260,7 +1311,8 @@ async function getTdxToken(credential) {
     const payload = await fetchJson(TDX_TOKEN_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-      body
+      body,
+      signal: options.signal
     });
     if (!payload.access_token) throw new UpstreamError('TDX token response did not include access_token', 502);
     credential.token = payload.access_token;
@@ -1324,57 +1376,69 @@ function tdxRefreshIntervalForUrl(url) {
 }
 
 function queueTdxRequest(task, options = {}) {
+  if (!isTdxAcquisitionActive()) throw new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
   if (isTdxPaused()) throw new UpstreamError('TDX queue is paused due to rate limits', 429);
   return tdxQueue.enqueue(async () => {
+    if (!isTdxAcquisitionActive()) throw new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
     const waitMs = Math.max(0, TDX_REQUEST_SPACING_MS - (Date.now() - lastTdxRequestAt));
     if (waitMs) await new Promise((resolve) => setTimeout(resolve, waitMs));
+    if (!isTdxAcquisitionActive()) throw new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
     lastTdxRequestAt = Date.now();
     return task();
   }, { maxAttempts: options.maxAttempts });
 }
 
 async function requestTdxUrl(url, options = {}) {
-  if (!tdxFetchingEnabled) throw new UpstreamError('管理員已關閉運輸資訊', 503);
-  if (!tdxCredential) throw new UpstreamError('TDX credential is not configured', 503);
-  if (isTdxPaused()) throw new UpstreamError('TDX queue is paused due to rate limits', 429);
-
-  let token;
+  const controller = new AbortController();
+  activeTdxRequests.add(controller);
   try {
-    token = await getTdxToken(tdxCredential);
-  } catch (error) {
-    if (error.status === 429) {
-      pauseTdxQueue();
-    }
-    throw error;
-  }
+    if (!tdxFetchingEnabled) throw new UpstreamError('管理員已關閉運輸資訊', 503);
+    if (!isTdxAcquisitionActive()) throw new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
+    if (!tdxCredential) throw new UpstreamError('TDX credential is not configured', 503);
+    if (isTdxPaused()) throw new UpstreamError('TDX queue is paused due to rate limits', 429);
 
-  try {
-    if (/EstimatedTimeOfArrival/.test(String(url.pathname))) {
-      etaTrace({
-        source: 'requestTdxUrl',
-        url: url.toString(),
-        event: 'outgoingRequest'
-      });
-    }
-    const data = await queueTdxRequest(() => {
-      if (!tdxFetchingEnabled) {
-        throw new UpstreamError('管理員已關閉運輸資訊', 503);
+    let token;
+    try {
+      token = await getTdxToken(tdxCredential, { signal: controller.signal });
+    } catch (error) {
+      if (error.status === 429) {
+        pauseTdxQueue();
       }
-      return fetchJson(url, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }
-      }, 60_000);
-    }, { maxAttempts: 1 });
-    return data;
-  } catch (error) {
-    if (error.status === 429) {
-      pauseTdxQueue();
+      if (!isTdxAcquisitionActive()) throw new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
+      throw error;
     }
-    if ([401, 403].includes(error.status)) {
-      tdxCredential.token = '';
-      tdxCredential.expiresAt = 0;
-      console.error('TDX token rejected; cleared cached token.');
+
+    try {
+      if (/EstimatedTimeOfArrival/.test(String(url.pathname))) {
+        etaTrace({
+          source: 'requestTdxUrl',
+          url: url.toString(),
+          event: 'outgoingRequest'
+        });
+      }
+      const data = await queueTdxRequest(() => {
+        if (!tdxFetchingEnabled) {
+          throw new UpstreamError('管理員已關閉運輸資訊', 503);
+        }
+        return fetchJson(url, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          signal: controller.signal
+        }, 60_000);
+      }, { maxAttempts: 1 });
+      return data;
+    } catch (error) {
+      if (error.status === 429) {
+        pauseTdxQueue();
+      }
+      if ([401, 403].includes(error.status)) {
+        tdxCredential.token = '';
+        tdxCredential.expiresAt = 0;
+        console.error('TDX token rejected; cleared cached token.');
+      }
+      throw error;
     }
-    throw error;
+  } finally {
+    activeTdxRequests.delete(controller);
   }
 }
 
@@ -1444,7 +1508,7 @@ async function fetchTdxUrl(url, cacheMs = TDX_RESPONSE_CACHE_MS, options = {}) {
 }
 
 async function refreshActiveTdxCache() {
-  if (!tdxFetchingEnabled) return [];
+  if (!isTdxAcquisitionActive()) return [];
   if (isTdxPaused()) {
     console.warn('Skipping active TDX cache refresh because TDX queue is paused');
     return [];
@@ -1469,6 +1533,7 @@ async function refreshActiveTdxCache() {
 
 function startTdxCacheRefresh() {
   tdxCacheRefreshTimer = setInterval(() => {
+    if (!isTdxAcquisitionActive()) return;
     if (isTdxPaused()) {
       console.warn('Skipping TDX shared cache refresh; TDX queue is paused');
       return;
@@ -2391,7 +2456,7 @@ async function fetchNationwideBusSource(source) {
 }
 
 async function refreshNationwideBusSnapshot() {
-  if (!tdxFetchingEnabled) return nationwideBusSnapshot;
+  if (!isTdxAcquisitionActive()) return nationwideBusSnapshot;
   if (isTdxPaused()) {
     console.warn('refreshNationwideBusSnapshot: skipped because TDX queue is paused');
     return nationwideBusSnapshot;
@@ -2442,12 +2507,13 @@ async function refreshNationwideBusSnapshot() {
 
 function startNationwideBusRefresh() {
   // Initial run respects queue pause and staggers immediate resume
-  if (!isTdxPaused()) {
+  if (isTdxAcquisitionActive() && !isTdxPaused()) {
     refreshNationwideBusSnapshot().catch((error) => console.error('Nationwide bus refresh failed:', error.message));
-  } else {
+  } else if (isTdxPaused()) {
     console.warn('Initial nationwide bus refresh skipped; TDX queue paused');
   }
   nationwideBusRefreshTimer = setInterval(() => {
+    if (!isTdxAcquisitionActive()) return;
     if (isTdxPaused()) {
       console.warn('Skipping nationwide bus refresh; TDX queue paused');
       return;
@@ -2465,9 +2531,14 @@ function startNationwideBusRefresh() {
 
 async function proxyBus(requestUrl, response) {
   const scope = requestUrl.searchParams.get('scope') || 'nearby';
+  if (isTdxAcquisitionActive() && !nationwideBusSnapshot.observedAt) {
+    await refreshNationwideBusSnapshot().catch((error) => {
+      console.error('Nationwide bus on-demand refresh failed:', error.message);
+    });
+  }
   const allBuses = Object.values(nationwideBusSnapshot.byCity).flat();
   const rateLimited = isTdxPaused();
-  const paused = !tdxFetchingEnabled;
+  const paused = !isTdxAcquisitionActive();
   let data = allBuses;
   if (scope !== 'all') {
     try {
@@ -2498,7 +2569,7 @@ async function proxyBus(requestUrl, response) {
     cityCounts: Object.fromEntries(Object.entries(nationwideBusSnapshot.byCity).map(([city, buses]) => [city, buses.length])),
     unavailableCities: nationwideBusSnapshot.unavailableCities,
     message: paused
-      ? '管理員已關閉運輸資訊'
+      ? tdxFetchingEnabled ? TDX_IDLE_PAUSED_MESSAGE : '管理員已關閉運輸資訊'
       : rateLimited
         ? '請求過多，請稍後再試'
         : nationwideBusSnapshot.unavailableCities.length
@@ -3320,6 +3391,7 @@ async function refreshRailJourneyNetwork(mode, date, cacheKey) {
 
 async function fetchRailJourneyNetwork(mode, date) {
   if (!tdxFetchingEnabled) throw new UpstreamError('管理員已關閉運輸資訊', 503);
+  if (!isTdxAcquisitionActive()) throw new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
   const cacheKey = `${mode}:${date}`;
   let entry = railJourneyNetworkCache.get(cacheKey);
   if (!entry) {
@@ -3768,6 +3840,7 @@ async function refreshBusJourneyNetwork(scope, cacheKey) {
 
 async function fetchBusJourneyNetwork(scope) {
   if (!tdxFetchingEnabled) throw new UpstreamError('管理員已關閉運輸資訊', 503);
+  if (!isTdxAcquisitionActive()) throw new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
   const cacheKey = scope.tdxCity;
   let entry = busJourneyNetworkCache.get(cacheKey);
   if (!entry) {
@@ -4047,7 +4120,7 @@ async function searchBusJourneys(scope, originId, destinationId, departure, opti
   let etaUnavailable = false;
   const etaPayload = options.includeRealtime !== false && stopFilter
     ? await fetchBusEtaOverlayPayload(stopFilter, scope).catch((error) => {
-      if (!tdxFetchingEnabled || error.message === '管理員已關閉運輸資訊') throw error;
+      if (!isTdxAcquisitionActive() || error.message === '管理員已關閉運輸資訊') throw error;
       etaUnavailable = true;
       console.error(`Unable to apply ${scope.tdxCity} bus ETA overlay:`, error.message);
       return [];
@@ -4364,6 +4437,7 @@ async function refreshMetroJourneyNetwork(scope, cacheKey) {
 
 async function fetchMetroJourneyNetwork(scope) {
   if (!tdxFetchingEnabled) throw new UpstreamError('管理員已關閉運輸資訊', 503);
+  if (!isTdxAcquisitionActive()) throw new UpstreamError(TDX_IDLE_PAUSED_MESSAGE, 503);
   const cacheKey = scope.system;
   let entry = metroJourneyNetworkCache.get(cacheKey);
   if (!entry) {
@@ -4672,7 +4746,7 @@ async function searchMetroJourneys(scope, originId, destinationId, departure, op
 }
 
 async function refreshActiveJourneyGraphs() {
-  if (!tdxFetchingEnabled) return [];
+  if (!isTdxAcquisitionActive()) return [];
   const now = Date.now();
   const isDue = (entry) => entry.network
     && entry.lastAccessAt >= now - JOURNEY_GRAPH_ACTIVE_WINDOW_MS
@@ -4692,6 +4766,7 @@ async function refreshActiveJourneyGraphs() {
 
 function startJourneyGraphRefresh() {
   journeyGraphRefreshTimer = setInterval(() => {
+    if (!isTdxAcquisitionActive()) return;
     refreshActiveJourneyGraphs().catch((error) => {
       console.error('Journey graph refresh failed:', error.message);
     });
@@ -6516,6 +6591,19 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(204, corsHeaders()).end();
     return;
   }
+  if (request.method === 'POST' && requestUrl.pathname === '/api/activity') {
+    request.resume();
+    recordTdxUserActivity();
+    sendJson(response, 200, {
+      success: true,
+      tdxAcquisitionActive: isTdxAcquisitionActive(),
+      tdxUserIdleTimeoutSeconds: TDX_USER_IDLE_TIMEOUT_MS / 1000
+    });
+    return;
+  }
+  if (request.method === 'GET' && ['/', '/index.html'].includes(requestUrl.pathname)) {
+    recordTdxUserActivity();
+  }
   if (request.method === 'GET' && requestUrl.pathname === '/api/status') {
     sendJson(response, 200, {
       success: true,
@@ -6540,6 +6628,9 @@ const server = http.createServer(async (request, response) => {
       },
       tdxFetchingEnabled,
       tdxFetchingChangedAt,
+      tdxAcquisitionActive: isTdxAcquisitionActive(),
+      tdxLastUserActivityAt: lastTdxUserActivityAt ? new Date(lastTdxUserActivityAt).toISOString() : null,
+      tdxUserIdleTimeoutSeconds: TDX_USER_IDLE_TIMEOUT_MS / 1000,
       cwaFetchingEnabled,
       cwaFetchingChangedAt,
       cwaEmergencyRefreshIntervalSeconds: CWA_EMERGENCY_REFRESH_INTERVAL_MS / 1000,
