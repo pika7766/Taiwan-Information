@@ -398,13 +398,41 @@ let fcmAccessToken = null;
 let portalNotificationQueue = Promise.resolve();
 let lastFcmNotification = null;
 
+const SEA_WARNING_RETENTION_MS = 3 * 60 * 60 * 1000;
+const OTHER_WARNING_RETENTION_MS = 60 * 60 * 1000;
+
+function emergencyRetentionMs(item) {
+  const text = [
+    item?.category,
+    item?.title,
+    item?.summary,
+    item?.details,
+    item?.phenomena
+  ].filter(Boolean).join(' ');
+  if (/陸上/.test(text)) return OTHER_WARNING_RETENTION_MS;
+  if (/海上/.test(text)) return SEA_WARNING_RETENTION_MS;
+  return OTHER_WARNING_RETENTION_MS;
+}
+
+function pruneExpiredEmergencies(items, nowMs = Date.now()) {
+  if (!Array.isArray(items)) return [];
+  return items.filter((item) => {
+    const timestamp = Date.parse(item?.receivedAt || item?.issuedAt || '');
+    if (!Number.isFinite(timestamp)) return true;
+    return nowMs - timestamp < emergencyRetentionMs(item);
+  });
+}
+
 function loadPortalContent() {
   try {
     const parsed = JSON.parse(fs.readFileSync(PORTAL_CONTENT_FILE, 'utf8'));
+    const emergencies = pruneExpiredEmergencies(
+      Array.isArray(parsed?.emergencies) ? parsed.emergencies : []
+    );
     return {
       version: 2,
       announcements: Array.isArray(parsed?.announcements) ? parsed.announcements : [],
-      emergencies: Array.isArray(parsed?.emergencies) ? parsed.emergencies : [],
+      emergencies,
       emergencyObservedAt: parsed?.emergencyObservedAt || null,
       settings: parsed?.settings && typeof parsed.settings === 'object' ? parsed.settings : {}
     };
@@ -1148,6 +1176,8 @@ async function handleAdminAnnouncementOrder(request, response) {
 }
 
 function handlePortalInformation(response) {
+  portalContent.emergencies = pruneExpiredEmergencies(portalContent.emergencies);
+  activeCwaHazards = pruneExpiredEmergencies(activeCwaHazards);
   sendJson(response, 200, {
     success: true,
     observedAt: new Date().toISOString(),
@@ -1253,6 +1283,7 @@ function portalCityCodeForCoordinates(lat, lng) {
 
 function handleDisasterAlerts(requestUrl, response) {
   try {
+    activeCwaHazards = pruneExpiredEmergencies(activeCwaHazards);
     const hasLatitude = requestUrl.searchParams.has('lat');
     const hasLongitude = requestUrl.searchParams.has('lng');
     if (hasLatitude !== hasLongitude) {
@@ -1787,11 +1818,15 @@ async function refreshCwaEmergencyInformation() {
         .filter((item) => item.category !== '地震')
         .map((item) => ({
           ...item,
+          receivedAt: activeCwaHazards.find((previous) => previous.id === item.id)?.receivedAt
+            || item.receivedAt,
           affectedCities: item.affectedCities?.length
             ? item.affectedCities
             : extractAffectedCityNames(item.affectedAreas, item.details)
         }));
-      activeCwaHazards = [...new Map(currentHazards.map((item) => [item.id, item])).values()];
+      activeCwaHazards = pruneExpiredEmergencies(
+        [...new Map(currentHazards.map((item) => [item.id, item])).values()]
+      );
       activeCwaHazardsObservedAt = new Date().toISOString();
     }
     const existingIds = new Set(portalContent.emergencies.map((item) => item.id));
@@ -1806,6 +1841,10 @@ async function refreshCwaEmergencyInformation() {
       portalContent.emergencies.sort((left, right) => (
         Date.parse(right.issuedAt || right.receivedAt || 0) - Date.parse(left.issuedAt || left.receivedAt || 0)
       ));
+    }
+    const retainedEmergencies = pruneExpiredEmergencies(portalContent.emergencies);
+    if (retainedEmergencies.length !== portalContent.emergencies.length) {
+      portalContent.emergencies = retainedEmergencies;
     }
     portalContent.emergencyObservedAt = new Date().toISOString();
     await persistPortalContent();
