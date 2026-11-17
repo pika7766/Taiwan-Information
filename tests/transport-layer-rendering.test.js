@@ -4,7 +4,16 @@ const path = require('node:path');
 const vm = require('node:vm');
 const test = require('node:test');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const ROOT = path.join(__dirname, '..');
+const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+
+test('web and Android APK refresh map movement after the same idle delay', () => {
+  const apkHtml = fs.readFileSync(path.join(ROOT, '手機apk', 'www', 'index.html'), 'utf8');
+  const refreshDelay = (source) => Number(source.match(/const MANUAL_MAP_REFRESH_DELAY_MS = (\d+)_000;/)?.[1]) * 1000;
+
+  assert.equal(refreshDelay(html), 3_000);
+  assert.equal(refreshDelay(apkHtml), refreshDelay(html));
+});
 
 function readFunction(startMarker, endMarker) {
   const start = html.indexOf(startMarker);
