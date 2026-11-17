@@ -42,8 +42,8 @@
 - 服務選單提供管理員登入，預設帳號為 `admin`、密碼為 `7766`。
 - 登入狀態使用伺服器端 session 與 HttpOnly Cookie，不會將密碼或 session 寫入瀏覽器儲存空間。
 - 管理員可分別啟用或停用 TDX 運輸資訊、中央氣象署及政府資料開放平臺資料取得；TDX 停用期間仍保留既有伺服器快取。
-- 三個資料取得開關、公告內容及公告順序都寫入 `PORTAL_CONTENT_FILE`，管理員關閉 App、重新登入或伺服器重新啟動後仍會保留。
-- 管理員可填寫分類、重要程度、發布單位、標題、摘要與詳細內容，預覽並確認後新增公告，也可刪除公告或調整所有裝置看到的順序。
+- 三個資料取得開關、公告內容及順序、已刪除緊急資訊的設定都寫入 `PORTAL_CONTENT_FILE`，管理員關閉 App、重新登入或伺服器重新啟動後仍會保留。
+- 管理員可填寫分類、重要程度、發布單位、標題、摘要與詳細內容，預覽並確認後新增公告，也可刪除公告或調整所有裝置看到的順序；緊急即時資訊可勾選多筆後批次刪除。
 
 ### 生活與公共資訊
 
@@ -190,6 +190,7 @@ GraphHopper 的兩組 key 分別填入 `GRAPHHOPPER_API_KEY_1` 與 `GRAPHHOPPER_
 - `POST /api/admin/announcements`：發布已預覽確認的純文字系統公告，需管理員 session。
 - `PUT /api/admin/announcements/order`：儲存所有公告 ID 的顯示順序，需管理員 session。
 - `DELETE /api/admin/announcements/{id}`：永久刪除指定公告，需管理員 session。
+- `DELETE /api/admin/emergencies`：以 `{ "ids": ["緊急資訊 ID"] }` 批次刪除緊急即時資訊，需管理員 session；已刪除的警報不會在仍由來源回傳期間重新同步。
 - `POST /api/admin/logout`：登出並清除管理員 session。
 - `GET /api/information`：取得所有系統公告、永久緊急資訊及 CWA 開關狀態；網頁與原生 App 共用。
 - `GET /api/tdx/bus?scope=all`：取得目前已儲存的全臺公車快照。

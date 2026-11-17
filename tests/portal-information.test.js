@@ -186,6 +186,12 @@ test('announcements persist and CWA emergencies are retained without duplicates'
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
     });
     assert.equal(unauthorized.status, 401);
+    const unauthorizedEmergencyDelete = await fetch(`${baseUrl}/api/admin/emergencies`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['unauthorized'] })
+    });
+    assert.equal(unauthorizedEmergencyDelete.status, 401);
 
     const login = await fetch(`${baseUrl}/api/admin/login`, {
       method: 'POST',
@@ -194,6 +200,55 @@ test('announcements persist and CWA emergencies are retained without duplicates'
     });
     assert.equal(login.status, 200);
     const cookie = login.headers.get('set-cookie').split(';')[0];
+    const adminStatus = await (await fetch(`${baseUrl}/api/admin/status`, {
+      headers: { Accept: 'application/json', Cookie: cookie }
+    })).json();
+    const warningIds = adminStatus.emergencies
+      .filter((item) => item.category !== '地震')
+      .map((item) => item.id);
+    assert.equal(warningIds.length, 2);
+    const deleteWarnings = await fetch(`${baseUrl}/api/admin/emergencies`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ ids: warningIds })
+    });
+    assert.equal(deleteWarnings.status, 200);
+    const deletedWarnings = await deleteWarnings.json();
+    assert.equal(deletedWarnings.deletedCount, 2);
+    assert.equal(deletedWarnings.emergencyCount, 1);
+    assert.deepEqual(deletedWarnings.emergencies.map((item) => item.category), ['地震']);
+    const hazardsAfterDelete = await (await fetch(`${baseUrl}/api/hazards?lat=25.033&lng=121.565`)).json();
+    assert.equal(hazardsAfterDelete.data.alerts.length, 0);
+    const staleDelete = await fetch(`${baseUrl}/api/admin/emergencies`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ ids: [warningIds[0]] })
+    });
+    assert.equal(staleDelete.status, 409);
+
+    const cwaOff = await fetch(`${baseUrl}/api/admin/cwa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ enabled: false })
+    });
+    assert.equal(cwaOff.status, 200);
+    const cwaOffInformation = await (await fetch(`${baseUrl}/api/information`)).json();
+    const cwaOn = await fetch(`${baseUrl}/api/admin/cwa`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ enabled: true })
+    });
+    assert.equal(cwaOn.status, 200);
+    const afterCwaRefresh = await waitFor(async () => {
+      const response = await fetch(`${baseUrl}/api/information`);
+      if (!response.ok) return null;
+      const payload = await response.json();
+      return payload.data.hazardsObservedAt !== cwaOffInformation.data.hazardsObservedAt
+        ? payload : null;
+    });
+    assert.equal(afterCwaRefresh.data.hazards.length, 0);
+    assert.equal(afterCwaRefresh.data.emergencies.length, 0);
+
     const invalid = await fetch(`${baseUrl}/api/admin/announcements`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
@@ -291,6 +346,8 @@ test('announcements persist and CWA emergencies are retained without duplicates'
 
     const persisted = JSON.parse(fs.readFileSync(contentFile, 'utf8'));
     assert.equal(persisted.announcements.length, 1);
+    assert.equal(persisted.emergencies.length, 1);
+    assert.equal(Object.keys(persisted.dismissedEmergencies).length, 2);
     assert.equal(persisted.settings.tdxFetchingEnabled, true);
     assert.equal(persisted.settings.cwaFetchingEnabled, false);
     assert.equal(persisted.settings.dataGovFetchingEnabled, false);

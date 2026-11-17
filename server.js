@@ -433,12 +433,19 @@ function loadPortalContent() {
       version: 2,
       announcements: Array.isArray(parsed?.announcements) ? parsed.announcements : [],
       emergencies,
+      dismissedEmergencies: parsed?.dismissedEmergencies
+        && typeof parsed.dismissedEmergencies === 'object'
+        && !Array.isArray(parsed.dismissedEmergencies)
+        ? parsed.dismissedEmergencies : {},
       emergencyObservedAt: parsed?.emergencyObservedAt || null,
       settings: parsed?.settings && typeof parsed.settings === 'object' ? parsed.settings : {}
     };
   } catch (error) {
     if (error.code !== 'ENOENT') console.error('Unable to read portal content:', error.message);
-    return { version: 2, announcements: [], emergencies: [], emergencyObservedAt: null, settings: {} };
+    return {
+      version: 2, announcements: [], emergencies: [], dismissedEmergencies: {},
+      emergencyObservedAt: null, settings: {}
+    };
   }
 }
 
@@ -667,6 +674,7 @@ function sendAdminUnauthorized(response) {
 }
 
 function adminStatusPayload() {
+  portalContent.emergencies = pruneExpiredEmergencies(portalContent.emergencies);
   return {
     success: true,
     authenticated: true,
@@ -697,6 +705,7 @@ function adminStatusPayload() {
     announcementCount: portalContent.announcements.length,
     announcements: portalContent.announcements,
     emergencyCount: portalContent.emergencies.length,
+    emergencies: portalContent.emergencies,
     nationwideBusObservedAt: nationwideBusSnapshot.observedAt,
     acquisitionScope: {
       cityDataIsCityScopedByTdx: true,
@@ -1138,6 +1147,57 @@ async function handleAdminAnnouncementDelete(request, response, announcementId) 
     });
   } catch (error) {
     portalContent.announcements = previous;
+    sendApiError(response, error);
+  }
+}
+
+async function handleAdminEmergenciesDelete(request, response) {
+  if (!adminSessionFor(request)) {
+    sendAdminUnauthorized(response);
+    return;
+  }
+  try {
+    const { parsed } = await readJsonBody(request);
+    if (!Array.isArray(parsed?.ids) || parsed.ids.length === 0 || parsed.ids.length > 200) {
+      throw new UpstreamError('請選擇 1 至 200 則緊急即時資訊', 400);
+    }
+    const ids = parsed.ids.map((id) => typeof id === 'string' ? id.trim() : '');
+    if (ids.some((id) => !id || id.length > 200) || new Set(ids).size !== ids.length) {
+      throw new UpstreamError('緊急即時資訊 ID 不正確', 400);
+    }
+    const selectedIds = new Set(ids);
+    const removed = portalContent.emergencies.filter((item) => selectedIds.has(item.id));
+    if (removed.length !== ids.length) {
+      throw new UpstreamError('部分緊急即時資訊已變更，請重新整理後再試', 409);
+    }
+
+    const previousEmergencies = portalContent.emergencies;
+    const previousDismissedEmergencies = portalContent.dismissedEmergencies;
+    const previousActiveCwaHazards = activeCwaHazards;
+    portalContent.emergencies = previousEmergencies.filter((item) => !selectedIds.has(item.id));
+    portalContent.dismissedEmergencies = { ...previousDismissedEmergencies };
+    removed.forEach((item) => {
+      if (item.sourceDatasetId) {
+        portalContent.dismissedEmergencies[item.id] = item.sourceDatasetId;
+      }
+    });
+    activeCwaHazards = previousActiveCwaHazards.filter((item) => !selectedIds.has(item.id));
+    try {
+      await persistPortalContent();
+    } catch (error) {
+      portalContent.emergencies = previousEmergencies;
+      portalContent.dismissedEmergencies = previousDismissedEmergencies;
+      activeCwaHazards = previousActiveCwaHazards;
+      throw error;
+    }
+    sendJson(response, 200, {
+      success: true,
+      message: `已刪除 ${removed.length} 則緊急即時資訊`,
+      deletedCount: removed.length,
+      emergencyCount: portalContent.emergencies.length,
+      emergencies: portalContent.emergencies
+    });
+  } catch (error) {
     sendApiError(response, error);
   }
 }
@@ -1810,6 +1870,24 @@ async function refreshCwaEmergencyInformation() {
       const firstFailure = results.find((result) => result.status === 'rejected');
       throw firstFailure?.reason || new UpstreamError('中央氣象署緊急資訊目前無法讀取', 502);
     }
+    const refreshedEmergencyIdsByDataset = new Map();
+    const refreshedDatasetIds = new Set();
+    results.forEach((result, index) => {
+      if (result.status !== 'fulfilled') return;
+      const datasetId = CWA_EMERGENCY_DATASET_IDS[index];
+      refreshedDatasetIds.add(datasetId);
+      refreshedEmergencyIdsByDataset.set(
+        datasetId,
+        new Set(result.value.map((item) => item.id))
+      );
+    });
+    portalContent.dismissedEmergencies = Object.fromEntries(
+      Object.entries(portalContent.dismissedEmergencies).filter(([id, datasetId]) => (
+        !refreshedDatasetIds.has(datasetId)
+        || refreshedEmergencyIdsByDataset.get(datasetId)?.has(id)
+      ))
+    );
+    const dismissedEmergencyIds = new Set(Object.keys(portalContent.dismissedEmergencies));
     const hazardResults = results.filter((result, index) => (
       result.status === 'fulfilled' && !/E-A0015/i.test(CWA_EMERGENCY_DATASET_IDS[index])
     ));
@@ -1823,7 +1901,8 @@ async function refreshCwaEmergencyInformation() {
           affectedCities: item.affectedCities?.length
             ? item.affectedCities
             : extractAffectedCityNames(item.affectedAreas, item.details)
-        }));
+        }))
+        .filter((item) => !dismissedEmergencyIds.has(item.id));
       activeCwaHazards = pruneExpiredEmergencies(
         [...new Map(currentHazards.map((item) => [item.id, item])).values()]
       );
@@ -1832,7 +1911,7 @@ async function refreshCwaEmergencyInformation() {
     const existingIds = new Set(portalContent.emergencies.map((item) => item.id));
     const additions = [];
     fulfilled.flatMap((result) => result.value).forEach((item) => {
-      if (!item?.id || existingIds.has(item.id)) return;
+      if (!item?.id || existingIds.has(item.id) || dismissedEmergencyIds.has(item.id)) return;
       existingIds.add(item.id);
       additions.push(item);
     });
@@ -6738,6 +6817,10 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === 'POST' && requestUrl.pathname === '/api/admin/announcements') {
     await handleAdminAnnouncementPublish(request, response);
+    return;
+  }
+  if (request.method === 'DELETE' && requestUrl.pathname === '/api/admin/emergencies') {
+    await handleAdminEmergenciesDelete(request, response);
     return;
   }
   if (request.method === 'PUT' && requestUrl.pathname === '/api/admin/announcements/order') {

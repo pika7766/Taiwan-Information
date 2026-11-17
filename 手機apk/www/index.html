@@ -488,6 +488,21 @@
               </div>
               <div id="admin-announcement-list" class="mt-3 space-y-2" aria-live="polite"></div>
             </section>
+            <section class="border-t border-slate-200 pt-4" aria-labelledby="admin-emergency-management-title">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <h3 id="admin-emergency-management-title" class="text-sm font-bold text-slate-900">緊急即時資訊管理</h3>
+                  <p id="admin-emergency-count" class="mt-1 text-xs text-slate-500"></p>
+                </div>
+                <label class="flex min-h-10 shrink-0 items-center gap-2 text-xs font-semibold text-slate-700">
+                  <input id="admin-emergency-select-all" type="checkbox" class="h-4 w-4 accent-brand-700">
+                  全選
+                </label>
+              </div>
+              <p class="mt-1 text-xs leading-5 text-slate-500">勾選一則或多則資訊後即可刪除；刪除後不會再被同步回來。</p>
+              <div id="admin-emergency-list" class="mt-3 space-y-2" aria-live="polite"></div>
+              <button id="admin-emergency-delete-button" type="button" disabled class="mt-3 h-10 w-full rounded-md border border-red-200 px-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40">刪除已選資訊</button>
+            </section>
             <div class="flex gap-2">
               <button id="admin-refresh-button" type="button" class="h-10 flex-1 rounded-md border border-slate-300 px-3 text-sm font-bold hover:bg-slate-50">重新整理</button>
               <button id="admin-logout-button" type="button" class="h-10 flex-1 rounded-md border border-red-200 px-3 text-sm font-bold text-red-700 hover:bg-red-50">登出</button>
@@ -1059,6 +1074,8 @@
       selectedEmergencyCityCode: localStorage.getItem('portal-emergency-city'),
       adminAnnouncementPreviewSignature: '',
       adminAnnouncements: [],
+      adminEmergencies: [],
+      adminEmergencyManagementBusy: false,
       adminAuthenticated: false,
       savedPlaces: [],
       selectedBusStop: null,
@@ -1218,6 +1235,10 @@
       adminAnnouncementPublishButton: document.getElementById('admin-announcement-publish-button'),
       adminAnnouncementCount: document.getElementById('admin-announcement-count'),
       adminAnnouncementList: document.getElementById('admin-announcement-list'),
+      adminEmergencyCount: document.getElementById('admin-emergency-count'),
+      adminEmergencySelectAll: document.getElementById('admin-emergency-select-all'),
+      adminEmergencyList: document.getElementById('admin-emergency-list'),
+      adminEmergencyDeleteButton: document.getElementById('admin-emergency-delete-button'),
       adminRefreshButton: document.getElementById('admin-refresh-button'),
       adminLogoutButton: document.getElementById('admin-logout-button'),
       adminMessage: document.getElementById('admin-message'),
@@ -3616,6 +3637,8 @@
         : 'TDX 市區資料僅提供縣市端點；伺服器每縣市取得完整資料後共用快取，不會依地圖區塊重複請求。';
       elements.adminAnnouncementCount.textContent = `已發布 ${payload.announcementCount ?? 0} 則`;
       renderAdminAnnouncementList(payload.announcements);
+      elements.adminEmergencyCount.textContent = `共 ${payload.emergencyCount ?? 0} 則`;
+      renderAdminEmergencyList(payload.emergencies);
       showAdminMessage('');
     }
 
@@ -3673,6 +3696,106 @@
         return row;
       });
       elements.adminAnnouncementList.replaceChildren(...rows);
+    }
+
+    function renderAdminEmergencyList(items = state.adminEmergencies) {
+      state.adminEmergencies = Array.isArray(items) ? items : [];
+      elements.adminEmergencySelectAll.checked = false;
+      elements.adminEmergencySelectAll.indeterminate = false;
+      if (!state.adminEmergencies.length) {
+        const empty = document.createElement('p');
+        empty.className = 'rounded-md border border-dashed border-slate-300 px-3 py-4 text-center text-xs text-slate-500';
+        empty.textContent = '目前沒有可管理的緊急即時資訊';
+        elements.adminEmergencyList.replaceChildren(empty);
+        updateAdminEmergencySelection();
+        return;
+      }
+      const rows = state.adminEmergencies.map((item) => {
+        const row = document.createElement('label');
+        row.className = 'flex cursor-pointer items-start gap-3 rounded-md border border-slate-200 bg-slate-50 p-3';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = item.id || '';
+        checkbox.dataset.adminEmergencySelect = 'true';
+        checkbox.className = 'mt-1 h-4 w-4 shrink-0 accent-brand-700';
+        checkbox.setAttribute('aria-label', `選取緊急即時資訊：${item.title || item.category || '未命名資訊'}`);
+        const content = document.createElement('span');
+        content.className = 'min-w-0 flex-1';
+        const title = document.createElement('strong');
+        title.className = 'block break-words text-sm leading-5 text-slate-900';
+        title.textContent = item.title || '未命名緊急資訊';
+        const meta = document.createElement('span');
+        meta.className = 'mt-1 block text-xs leading-5 text-slate-500';
+        meta.textContent = `${item.category || '緊急即時資訊'} · ${item.severity || '緊急'} · ${formatOfficialTime(item.receivedAt || item.issuedAt)}`;
+        const summary = document.createElement('span');
+        summary.className = 'mt-1 block line-clamp-2 text-xs leading-5 text-slate-700';
+        summary.textContent = item.summary || '';
+        content.append(title, meta, summary);
+        row.append(checkbox, content);
+        return row;
+      });
+      elements.adminEmergencyList.replaceChildren(...rows);
+      updateAdminEmergencySelection();
+    }
+
+    function updateAdminEmergencySelection() {
+      const checkboxes = [...elements.adminEmergencyList.querySelectorAll('[data-admin-emergency-select]')];
+      const selectedCount = checkboxes.filter((checkbox) => checkbox.checked).length;
+      elements.adminEmergencySelectAll.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+      elements.adminEmergencySelectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+      elements.adminEmergencyDeleteButton.disabled = selectedCount === 0 || state.adminEmergencyManagementBusy;
+      elements.adminEmergencyDeleteButton.textContent = selectedCount
+        ? `刪除已選資訊（${selectedCount}）` : '刪除已選資訊';
+    }
+
+    function handleAdminEmergencySelectionChange() {
+      updateAdminEmergencySelection();
+    }
+
+    function selectAllAdminEmergencies() {
+      elements.adminEmergencyList.querySelectorAll('[data-admin-emergency-select]').forEach((checkbox) => {
+        checkbox.checked = elements.adminEmergencySelectAll.checked;
+      });
+      updateAdminEmergencySelection();
+    }
+
+    async function deleteSelectedAdminEmergencies() {
+      const ids = [...elements.adminEmergencyList.querySelectorAll('[data-admin-emergency-select]:checked')]
+        .map((checkbox) => checkbox.value);
+      if (!ids.length || state.adminEmergencyManagementBusy) return;
+      if (!window.confirm(`確定要刪除選取的 ${ids.length} 則緊急即時資訊嗎？刪除後所有裝置都不會再顯示，且不會被自動同步回來。`)) return;
+
+      state.adminEmergencyManagementBusy = true;
+      updateAdminEmergencySelection();
+      elements.adminEmergencySelectAll.disabled = true;
+      elements.adminEmergencyList.querySelectorAll('input').forEach((checkbox) => { checkbox.disabled = true; });
+      try {
+        const response = await fetch(new URL('/api/admin/emergencies', API_BASE_URL), {
+          method: 'DELETE',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ ids })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          showAdminLogin();
+          throw new Error(payload.message || '請重新登入');
+        }
+        if (!response.ok || !payload.success) throw new Error(payload.message || `HTTP ${response.status}`);
+        renderAdminEmergencyList(payload.emergencies);
+        elements.adminEmergencyCount.textContent = `共 ${payload.emergencyCount ?? 0} 則`;
+        await refreshPortalInformation();
+        showAdminMessage(`已刪除 ${payload.deletedCount ?? ids.length} 則緊急即時資訊`, 'success');
+      } catch (error) {
+        const message = error.message;
+        await loadAdminStatus().catch(() => undefined);
+        showAdminMessage(message);
+      } finally {
+        state.adminEmergencyManagementBusy = false;
+        elements.adminEmergencySelectAll.disabled = false;
+        elements.adminEmergencyList.querySelectorAll('input').forEach((checkbox) => { checkbox.disabled = false; });
+        updateAdminEmergencySelection();
+      }
     }
 
     function setAdminAnnouncementManagementDisabled(disabled) {
@@ -6084,6 +6207,9 @@
       bindEventListener(elements.adminAnnouncementPreviewButton, 'click', previewAdminAnnouncement, '#admin-announcement-preview-button');
       bindEventListener(elements.adminAnnouncementForm, 'submit', publishAdminAnnouncement, '#admin-announcement-form');
       bindEventListener(elements.adminAnnouncementList, 'click', handleAdminAnnouncementListAction, '#admin-announcement-list');
+      bindEventListener(elements.adminEmergencyList, 'change', handleAdminEmergencySelectionChange, '#admin-emergency-list');
+      bindEventListener(elements.adminEmergencySelectAll, 'change', selectAllAdminEmergencies, '#admin-emergency-select-all');
+      bindEventListener(elements.adminEmergencyDeleteButton, 'click', deleteSelectedAdminEmergencies, '#admin-emergency-delete-button');
       elements.adminAnnouncementForm.querySelectorAll('input, textarea, select').forEach((control) => {
         bindEventListener(control, 'input', invalidateAdminAnnouncementPreview, `#${control.id} input`);
         bindEventListener(control, 'change', invalidateAdminAnnouncementPreview, `#${control.id} change`);
